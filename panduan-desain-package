@@ -1,0 +1,305 @@
+# Panduan Desain Package & Dokumentasi yang Ramah AI
+
+> Kumpulan prinsip, konvensi, dan standar industri untuk membuat package, API, atau dokumentasi yang mudah dipahami dan digunakan oleh AI agent (seperti Claude, ChatGPT, Cursor, dsb).
+
+---
+
+## 1. Konteks: Kenapa Ini Penting
+
+AI agent kini menjadi konsumen utama dokumentasi teknis. Menurut data traffic GitBook, sekitar 41% permintaan halaman dokumentasi kini datang dari AI agent, bukan manusia. AI membaca dokumentasi secara berbeda dari manusia — ia melakukan _chunking, retrieval,_ dan _extraction_, bukan membaca linear dengan intuisi kontekstual. Dokumentasi yang jelas bagi manusia bisa jadi tidak jelas atau ambigu bagi AI jika strukturnya tidak eksplisit.
+
+Belum ada badan standar resmi (seperti W3C untuk HTML) yang mengatur ini. Yang ada adalah **konvensi industri yang berkembang cepat**, dipimpin oleh perusahaan seperti Anthropic, Vercel, dan Stripe.
+
+| Layer                   | Standar/Konvensi                  | Status                                   |
+| ----------------------- | --------------------------------- | ---------------------------------------- |
+| Koneksi & aksi tool     | **MCP (Model Context Protocol)**  | **Standar terbuka resmi, paling matang** |
+| UI interaktif dari tool | **MCP Apps** (ekstensi resmi MCP) | Standar resmi, rilis 2026-07-28          |
+| Discovery dokumentasi   | `llms.txt`                        | Konvensi terbuka, belum formal           |
+| Desain tool/API         | Anthropic Engineering Guide       | Panduan resmi, bukan standar industri    |
+| Deskripsi kapabilitas   | `skill.md`                        | Sangat baru, eksperimental               |
+| Izin akses agent        | `agent-permissions.json`          | Proposal akademik                        |
+
+---
+
+## 2. Prinsip Pengkodean & Desain Package Umum (Fondasi Universal)
+
+Sebelum masuk ke lapisan khusus AI, ada baiknya fondasi ini dikuasai dulu — karena package yang solid secara software engineering biasanya **otomatis** lebih mudah dipahami AI juga, sebab strukturnya predictable dan konsisten.
+
+### 2.1 Prinsip Pengkodean
+
+| Prinsip                              | Inti                                                                                                                |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| **SOLID**                            | 5 prinsip OOP: Single Responsibility, Open/Closed, Liskov Substitution, Interface Segregation, Dependency Inversion |
+| **DRY** (Don't Repeat Yourself)      | Hindari duplikasi logika — satu sumber kebenaran                                                                    |
+| **KISS** (Keep It Simple, Stupid)    | Solusi sesederhana mungkin, hindari over-engineering                                                                |
+| **YAGNI** (You Aren't Gonna Need It) | Jangan bangun fitur "untuk jaga-jaga" sebelum benar-benar dibutuhkan                                                |
+| **Separation of Concerns**           | Setiap modul menangani satu tanggung jawab, tidak tercampur                                                         |
+| **Law of Demeter**                   | Modul hanya "bicara" dengan tetangga langsungnya, tidak menembus rantai objek dalam-dalam                           |
+
+### 2.2 Standar Desain API/Package
+
+- **Semantic Versioning (SemVer)** — format `MAJOR.MINOR.PATCH`. Breaking change → naikkan MAJOR. Fitur baru backward-compatible → MINOR. Bug fix → PATCH. Standar de facto hampir semua package manager (npm, pip, cargo).
+- **Google API Design Guide** — panduan resmi Google untuk desain resource, naming, dan error handling di API, banyak diadopsi di luar Google.
+- **Microsoft REST API Guidelines** — standar serupa untuk REST API, sangat detail soal pagination, versioning, format error.
+- **12-Factor App** — khusus aplikasi/service, tapi prinsipnya (config via env, stateless process, dsb) relevan juga untuk package yang dipakai di banyak environment.
+- **Keep a Changelog** (keepachangelog.com) — format changelog konsisten, bisa dibaca manusia maupun tooling.
+
+### 2.3 Prinsip Desain Interface Package
+
+- **Principle of Least Astonishment** — perilaku fungsi harus sesuai ekspektasi dari namanya, tidak mengejutkan pemakai.
+- **Fail Fast** — validasi input di awal, error secepat mungkin, bukan gagal diam-diam di tengah proses.
+- **Convention over Configuration** — beri default yang masuk akal, agar user tidak wajib mengonfigurasi semua hal.
+- **Backward Compatibility** — hindari breaking change tanpa jalur migrasi/deprecation period yang jelas.
+- **Public API Surface Minimal** — expose sesedikit mungkin (`_private`, `internal`, `#private` sesuai bahasa) supaya ruang refactor tetap besar tanpa merusak pengguna.
+
+### 2.4 Checklist Fondasi
+
+- [ ] Setiap modul/class punya satu tanggung jawab yang jelas (SRP)
+- [ ] Tidak ada logika yang diduplikasi di lebih dari satu tempat
+- [ ] Versi package mengikuti SemVer secara konsisten
+- [ ] Ada CHANGELOG.md yang mengikuti format Keep a Changelog
+- [ ] API publik minimal — implementasi detail disembunyikan
+- [ ] Breaking change selalu disertai jalur migrasi/deprecation warning
+
+---
+
+Berbeda dengan lapisan-lapisan lain di dokumen ini yang masih berupa konvensi longgar, **Model Context Protocol (MCP)** adalah standar terbuka yang paling matang dan formal untuk menghubungkan AI agent dengan tool/data eksternal. Kalau kamu membangun package yang ingin dipakai _langsung_ oleh AI agent (bukan cuma dibaca dokumentasinya), MCP adalah fondasi yang seharusnya dipertimbangkan lebih dulu.
+
+## 3. Lapisan 0: MCP — Protokol Fondasi (Standar Paling Formal)
+
+Berbeda dengan lapisan-lapisan lain di dokumen ini yang masih berupa konvensi longgar, **Model Context Protocol (MCP)** adalah standar terbuka yang paling matang dan formal untuk menghubungkan AI agent dengan tool/data eksternal. Kalau kamu membangun package yang ingin dipakai _langsung_ oleh AI agent (bukan cuma dibaca dokumentasinya), MCP adalah fondasi yang seharusnya dipertimbangkan lebih dulu.
+
+### 3.1 Apa Itu MCP
+
+Diperkenalkan Anthropic pada November 2024, MCP menstandarkan koneksi dua arah antara aplikasi AI dan tool/data eksternal — sering dianalogikan sebagai "USB-C untuk AI": host apa pun (Claude, ChatGPT, Cursor, VS Code Copilot) bisa terhubung ke server apa pun yang comply. Kini didukung native oleh OpenAI dan Google, dan sudah menjadi standar de facto untuk integrasi AI, dengan server komunitas untuk GitHub, Slack, Stripe, Figma, dan ratusan tool lainnya.
+
+Sebelum MCP, setiap kombinasi aplikasi-AI × tool butuh integrasi custom sendiri (M aplikasi × N tool = M×N integrasi unik) dengan pola auth dan sandboxing yang tidak konsisten.
+
+### 3.2 Tiga Primitif Utama
+
+| Primitif      | Fungsi                                                                                               |
+| ------------- | ---------------------------------------------------------------------------------------------------- |
+| **Tools**     | Fungsi yang bisa dipanggil model, dideskripsikan dengan nama, deskripsi, dan JSON Schema untuk input |
+| **Resources** | Konteks yang bisa dibaca (file, record), diidentifikasi lewat URI                                    |
+| **Prompts**   | Template prompt yang bisa dipakai ulang, ditawarkan server ke client                                 |
+
+Client juga bisa menawarkan kapabilitas balik ke server: _sampling_ (server minta client menghasilkan teks), _elicitation_ (server minta input tambahan dari user), dan _roots_ (server tahu direktori/URI mana yang boleh ia operasikan).
+
+### 3.3 Arsitektur & Transport
+
+Komunikasi memakai JSON-RPC 2.0 lewat dua transport:
+
+- **stdio** — server berjalan sebagai subprocess lokal, cocok untuk tool desktop/development.
+- **Streamable HTTP** — untuk koneksi remote dan scalable, dengan opsi Server-Sent Events untuk pesan server-ke-client.
+
+Spesifikasi terbaru (**2026-07-28**) membawa perubahan besar: protocol core yang _stateless_ (menghilangkan session-tracking di level protokol agar bisa discale di infrastruktur HTTP biasa), _Multi Round-Trip Requests_, _header-based routing_, _cacheable list results_, penguatan otorisasi, dan formal _extensions framework_ — kerangka resmi agar kapabilitas baru (seperti MCP Apps dan Tasks di bawah) bisa dirilis dengan siklus versinya sendiri, diidentifikasi lewat reverse-DNS ID.
+
+### 3.4 MCP Apps — UI Interaktif dari MCP Server
+
+**MCP Apps** adalah ekstensi resmi MCP (dibangun di atas _mcp-ui_). Jika spesifikasi dasar MCP terbatas pada teks dan data terstruktur, MCP Apps menstandarkan pengiriman **UI interaktif** — dashboard, form, visualisasi data — dari MCP server ke aplikasi host seperti Claude dan ChatGPT. Inilah dasar dari widget seperti peta, resep interaktif, atau grafik yang bisa dirender langsung dalam percakapan, bukan cuma teks.
+
+Implikasi desain kalau package-mu ingin punya UI yang dirender AI host:
+
+- Pisahkan dengan jelas tool yang **read-only** (aman dipanggil otonom) dari tool **MCP Apps pihak ketiga** (butuh persetujuan eksplisit user sebelum dipanggil, karena ini representasi pilihan/preferensi user).
+- Deskripsikan tool dengan tag/metadata yang jelas agar host tahu kapan harus meminta konfirmasi user vs langsung memanggil.
+
+### 3.5 Tasks — Agent yang Berjalan Lama
+
+Ekstensi resmi lain (dikontribusikan AWS) yang membawa dukungan untuk agent yang berjalan lama dan reliable — relevan kalau tool-mu punya proses async/berdurasi panjang (misal: rendering video, training job).
+
+### 3.6 Kapan Pakai MCP vs `llms.txt`
+
+| Kebutuhan                                                                        | Solusi                 |
+| -------------------------------------------------------------------------------- | ---------------------- |
+| AI cuma perlu **membaca** dokumentasimu untuk menjawab pertanyaan                | `llms.txt` sudah cukup |
+| AI perlu **memanggil fungsi/aksi** di package-mu (create, update, delete, query) | Bangun **MCP server**  |
+| AI perlu menampilkan **UI interaktif** dari tool-mu                              | MCP Apps               |
+| Aksi butuh waktu lama / berjalan di background                                   | Tasks                  |
+
+Keduanya tidak eksklusif — package modern idealnya punya `llms.txt` untuk discovery dokumentasi **dan** MCP server untuk aksi langsung.
+
+---
+
+## 4. Lapisan 1: Discovery — `llms.txt`
+
+`llms.txt` berfungsi seperti `robots.txt`, tapi tujuannya kebalikan: bukan melarang, melainkan **menunjukkan** ke AI agent di mana konten paling otoritatif berada.
+
+### 4.1 Format Standar
+
+Ditempatkan di root domain: `https://domainmu.com/llms.txt`
+
+```markdown
+# Nama Proyek
+
+> Ringkasan satu-dua kalimat tentang apa yang dilakukan proyek ini.
+
+## Dokumentasi Inti
+
+- [Quickstart](https://domainmu.com/docs/quickstart.md): Cara mulai dalam 5 menit
+- [Autentikasi](https://domainmu.com/docs/auth.md): Cara setup API key
+- [Referensi API](https://domainmu.com/docs/api.md): Daftar lengkap endpoint
+
+## Panduan Tambahan
+
+- [Migrasi versi](https://domainmu.com/docs/migration.md)
+- [Troubleshooting](https://domainmu.com/docs/troubleshooting.md)
+```
+
+### 4.2 Aturan Penting
+
+- **Jangan** memperlakukannya seperti sitemap yang mendaftar ratusan halaman — itu justru membuat AI harus menebak apa yang penting.
+- Ada dua varian:
+  - `/llms.txt` — indeks ringkas untuk navigasi.
+  - `/llms-full.txt` — dokumentasi lengkap tertanam langsung, tanpa perlu fetch tambahan.
+- Link idealnya mengarah ke versi **Markdown mentah** (`.md`), bukan halaman HTML yang penuh CSS/JS.
+
+### 4.3 Content Negotiation (Opsional, Lebih Kuat)
+
+Server bisa mengembalikan format berbeda berdasarkan header `Accept`:
+
+- `Accept: text/html` → halaman HTML biasa untuk browser.
+- `Accept: text/markdown` → versi Markdown bersih untuk AI agent.
+
+Ini pendekatan dengan ROI tertinggi karena bekerja dengan semua tool yang mendukung HTTP fetch, tanpa perlu integrasi khusus di sisi client.
+
+### 4.4 Tooling yang Tersedia
+
+- `vitepress-plugin-llms` (VitePress)
+- `docusaurus-plugin-llms` (Docusaurus)
+- `llms-txt-php` (PHP library)
+- Platform seperti **Fern** auto-generate `llms.txt` dari definisi API.
+
+---
+
+## 5. Lapisan 2: Desain Tool/Function — Panduan Anthropic
+
+Ini paling relevan kalau kamu membuat _package_ atau _tool_ yang akan dipanggil langsung oleh AI (bukan sekadar dibaca dokumentasinya). Berdasarkan panduan resmi Anthropic, "Writing Effective Tools for AI Agents":
+
+### 5.1 Prinsip Inti
+
+**Filosofi dasar:** tool untuk AI agent adalah _kontrak antara sistem deterministik dan agent non-deterministik_. Beda dari API tradisional, karena agent bisa salah paham tujuan, berhalusinasi, atau memanggil tool dengan cara yang tidak terduga. Desainmu harus toleran terhadap ini.
+
+| Prinsip                        | Penjelasan                                                                                                                                                                  |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **High leverage**              | Buat tool yang benar-benar memperluas kapabilitas agent, bukan sekadar wrapper tipis dari API yang sudah ada                                                                |
+| **Namespace & diferensiasi**   | Beri nama tool yang jelas dan berbeda satu sama lain, agar agent tidak bingung memilih. Contoh: prefiks per-domain (`user_create`, `user_delete`, bukan `create`, `delete`) |
+| **Return konteks bermakna**    | Kembalikan field yang bisa dibaca manusia (`"status": "delivered"`), bukan ID mentah tanpa konteks (`"status_code": 3`)                                                     |
+| **Optimalkan token**           | Terapkan pagination, truncation, dan filtering supaya output tidak membanjiri context window agent                                                                          |
+| **Deskripsi adalah segalanya** | Perbaikan kecil pada deskripsi parameter/fungsi sering memberi lompatan besar pada akurasi penggunaan                                                                       |
+
+### 5.2 Checklist Praktis
+
+- [ ] Apakah nama tool unik dan tidak mirip dengan tool lain dalam package?
+- [ ] Apakah setiap parameter punya deskripsi + contoh nilai?
+- [ ] Apakah error message menjelaskan **apa yang salah** dan **cara memperbaikinya**?
+- [ ] Apakah output tidak membludak (ada limit/pagination default)?
+- [ ] Kalau kamu sendiri (manusia) ragu tool mana yang harus dipakai di suatu situasi, agent pasti lebih bingung — sederhanakan set tool-mu.
+
+### 5.3 Cara Menguji
+
+Anthropic merekomendasikan pendekatan iteratif berbasis evaluasi:
+
+1. Buat prototipe cepat.
+2. Bungkus tool dalam server MCP lokal untuk diuji langsung dengan Claude Code / Claude Desktop.
+3. Amati di mana agent salah memanggil atau salah menafsirkan — itu sinyal untuk memperbaiki nama/deskripsi, bukan menyalahkan agent.
+4. Ulangi.
+
+---
+
+## 6. Lapisan 3: Context Engineering — Menulis Contoh & Prompt Pendukung
+
+Berdasarkan panduan Anthropic "Effective Context Engineering for AI Agents":
+
+- **Kurasi, jangan menumpuk.** Pilih sedikit contoh kanonis yang beragam dan representatif, ketimbang menjejalkan daftar panjang edge case ke README/prompt. Contoh adalah "gambar yang bernilai seribu kata" bagi LLM.
+- **Struktur dangkal lebih baik dari struktur dalam.** Hindari config bersarang seperti `config.settings.advanced.options.x`. Signature eksplisit lebih mudah diikuti.
+- **Persistent memory sederhana membantu.** Untuk task panjang/kompleks, pola seperti file `NOTES.md` atau to-do list internal membantu agent melacak progres lintas banyak pemanggilan tool.
+
+---
+
+## 7. Lapisan 4 (Emerging): `skill.md` dan `agent-permissions.json`
+
+Dua konvensi yang lebih baru dan belum mapan, tapi mulai muncul di ekosistem:
+
+### 7.1 `skill.md`
+
+Berisi ringkasan kapabilitas terstruktur: apa yang bisa dicapai agent dengan produk ini, input apa yang dibutuhkan, dan batasan/constraint apa yang berlaku. Cocok ditaruh di root repository package.
+
+Struktur minimal yang disarankan:
+
+```markdown
+# Nama Skill/Package
+
+## Kapan Dipakai
+
+Deskripsi trigger/kondisi kapan tool ini relevan digunakan.
+
+## Kapabilitas
+
+- Apa yang bisa dilakukan
+- Apa yang TIDAK bisa dilakukan (batasan eksplisit)
+
+## Input yang Dibutuhkan
+
+Daftar parameter/prasyarat.
+
+## Contoh Penggunaan
+
+Contoh konkret input → output.
+```
+
+### 7.2 `agent-permissions.json`
+
+Manifest izin gaya `robots.txt`, mendeklarasikan interaksi otomatis mana yang diizinkan: rate limit, kebutuhan human-in-the-loop, endpoint yang direkomendasikan. Berguna kalau package-mu punya efek samping (menulis data, mengirim uang, dsb) yang perlu dibatasi otonomi agent-nya.
+
+---
+
+## 8. Checklist Ringkas — Sebelum Merilis Package
+
+**Jika Package Menyediakan Aksi untuk AI (via MCP)**
+
+- [ ] Tool dideskripsikan dengan JSON Schema yang lengkap dan jelas
+- [ ] Nama tool di-namespace, tidak bentrok dengan tool lain di ekosistem
+- [ ] Tool dengan efek samping (write/delete) dipisahkan jelas dari tool read-only
+- [ ] Kalau ada UI (MCP Apps), tool pihak ketiga tidak dipanggil otonom tanpa persetujuan user
+- [ ] Sudah diuji lewat MCP server lokal dengan Claude Code/Claude Desktop, bukan cuma dibaca manusia
+
+**Discovery**
+
+- [ ] Ada `llms.txt` di root domain (jika punya dokumentasi web)
+- [ ] Versi Markdown bersih tersedia untuk halaman penting
+
+**Kode & API**
+
+- [ ] Nama fungsi deskriptif dan konsisten pola penamaannya
+- [ ] Type hints / TypeScript types lengkap
+- [ ] Docstring berisi: deskripsi, parameter, return value, contoh
+- [ ] Error message actionable, bukan sekadar kode angka
+- [ ] Struktur data kompleks punya schema formal (JSON Schema/OpenAPI)
+- [ ] Tidak ada dua cara berbeda untuk mencapai hasil yang sama
+
+**Dokumentasi**
+
+- [ ] README punya contoh kode untuk kasus umum DAN edge case
+- [ ] Contoh dikurasi (sedikit tapi representatif), bukan daftar panjang
+- [ ] Tidak bergantung pada JavaScript/tab tersembunyi untuk menampilkan info penting
+
+**Jika Berupa Tool untuk Agent (MCP dsb)**
+
+- [ ] Nama tool di-namespace, tidak ambigu dengan tool lain
+- [ ] Output difilter/dipaginasi, tidak membanjiri context window
+- [ ] Sudah diuji langsung dengan agent sungguhan (Claude Code, dsb), bukan cuma dibaca manusia
+
+---
+
+## 9. Referensi
+
+- Model Context Protocol — Spesifikasi resmi — https://modelcontextprotocol.io/specification/2026-07-28
+- Model Context Protocol — Blog rilis 2026-07-28 — https://blog.modelcontextprotocol.io/posts/2026-07-28/
+- llms.txt Specification — https://llmstxt.org/
+- Anthropic — "Writing Effective Tools for AI Agents" — https://www.anthropic.com/engineering/writing-tools-for-agents
+- Anthropic — "Effective Context Engineering for AI Agents" — https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents
+- Anthropic — "Building Effective Agents" — https://www.anthropic.com/engineering/building-effective-agents
+
+---
+
+_Catatan: dokumen ini merangkum konvensi industri per pertengahan 2026. Karena bidang ini berkembang cepat, cek ulang sumber resmi di atas secara berkala._

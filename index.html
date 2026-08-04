@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Voxel Engine — WebGPU + bitECS Modular</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<canvas id="gpu-canvas"></canvas>
+<div id="crosshair" class="hidden"></div>
+<div id="hud" class="hidden"></div>
+<div id="controls" style="position:fixed; top:14px; right:14px; background:rgba(10,14,20,0.8); backdrop-filter:blur(6px); padding:10px 14px; border-radius:8px; border:1px solid rgba(120,170,255,0.2); z-index:100; color:#cfe8ff; font-size:13px; width:220px;">
+  <b style="color:#7fd4ff;">Benchmark Config</b><br>
+  
+  <div style="margin-top:8px;">1. Struktur Data:</div>
+  <select id="storage-select" style="margin-top:4px; background:#141b26; color:#cfe8ff; border:1px solid rgba(120,170,255,0.4); padding:6px; width:100%; border-radius:4px;">
+    <option value="flat">Flat Grid (O(1) Cepat)</option>
+    <option value="octree">SVO Octree (Kompresi)</option>
+    <option value="brickmap">BrickMap (Hibrida Terbaik)</option>
+    <option value="svdag">SVDAG (Eksperimen)</option>
+  </select>
+
+  <div style="margin-top:8px;">2. Tipe Medan (Kondisi):</div>
+  <select id="terrain-select" style="margin-top:4px; background:#141b26; color:#cfe8ff; border:1px solid rgba(120,170,255,0.4); padding:6px; width:100%; border-radius:4px;">
+    <option value="normal">Normal (Perlin Noise)</option>
+    <option value="homogeneous">Homogen (Best untuk Octree)</option>
+    <option value="checkerboard">Catur (Worst untuk Octree)</option>
+  </select>
+
+  <div style="margin-top:8px;">3. Mesin Render (Pipeline):</div>
+  <select id="render-select" style="margin-top:4px; background:#2a1426; color:#ffcfef; border:1px solid rgba(255,120,200,0.4); padding:6px; width:100%; border-radius:4px;">
+    <option value="raster">Rasterisasi (Poligon) - Mode Saat Ini</option>
+    <option value="raytrace">VoxelRT (Compute Raycast) - Eksperimental</option>
+  </select>
+
+  <button id="rebuild-btn" style="margin-top:12px; width:100%; background:#1c2635; color:#cfe8ff; border:1px solid #7fd4ff; border-radius:4px; padding:6px; cursor:pointer;">Mulai Benchmark</button>
+</div>
+
+<div id="overlay">
+  <div id="status">Menginisialisasi WebGPU…</div>
+  <div class="bar"><div class="fill" id="fill"></div></div>
+  <small id="hint">Worker Pool paralel + terrain smoothing, MSAA 4x, fog, dan hemispherical ambient.</small>
+</div>
+
+<script type="module" src="src/game/main.js"></script>
+</body>
+</html>

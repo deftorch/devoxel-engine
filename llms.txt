@@ -1,0 +1,19 @@
+# Devoxel Engine
+
+> A modular, WebGPU-powered Voxel Engine architecture designed for high-performance chunk rendering and AI-driven development.
+
+## Core Documentation
+
+- [AI Agent Rules](https://github.com/deftorch/devoxel-engine/blob/main/.github/agents/agents.md): Crucial rules for AI agents modifying this codebase.
+- [Skill Definition](https://github.com/deftorch/devoxel-engine/blob/main/skill.md): Engine capabilities and technical constraints.
+
+## Engine Structure
+
+- `/voxel-engine/src/core`: The shared core containing WebGPU renderers, bitECS components, and math utilities.
+- `/voxel-engine/src/game`: The runtime logic for the game, including chunk generation workers and UI.
+- `/voxel-engine/src/data`: The data-driven JSON registries (e.g., blocks, materials).
+
+## Entry Points
+
+- Game Runtime: `/voxel-engine/index.html`
+- Standalone Editor: `/voxel-engine/editor.html`
