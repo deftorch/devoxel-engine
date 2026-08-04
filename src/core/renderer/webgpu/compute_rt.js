@@ -13,8 +13,48 @@ let globalRadiancePoolData = new Float32Array(50000 * 512); // Memori baru untuk
 
 let globalBrickCount = 1; // 0 is AIR
 
+// Freelist: stack (LIFO) berisi index brick yang sudah dilepas dan siap dipakai ulang.
+// Tanpa ini, setiap chunk yang dibangun ulang di mode raytrace akan terus menaikkan
+// globalBrickCount tanpa batas (kebocoran memori GPU/CPU brick pool).
+let freeBrickList = [];
+
 let isTopGridDirty = true;
 let dirtyBrickPoolQueue = [];
+
+/**
+ * Alokasikan satu slot brick global. Pakai ulang dari freeBrickList kalau ada,
+ * kalau tidak alokasikan slot baru di ujung pool.
+ * @returns {number} brick index (selalu > 0, 0 dicadangkan untuk udara)
+ */
+function allocBrick() {
+  if (freeBrickList.length > 0) return freeBrickList.pop();
+  return globalBrickCount++;
+}
+
+/**
+ * Lepaskan semua brick milik chunk (cx, cz) kembali ke freeBrickList, dan kosongkan
+ * referensinya di topGrid global. Dipanggil lewat volume.destroy() saat chunk entity
+ * dihapus (lihat observer onRemove(VoxelVolume) di components.js).
+ */
+function freeChunkVolume(cx, cz) {
+  for (let sz = 0; sz < 2; sz++) {
+    for (let sy = 0; sy < 5; sy++) {
+      for (let sx = 0; sx < 2; sx++) {
+        const gx = cx * 2 + sx, gz = cz * 2 + sz;
+        const globalIdx = gx + sy * 12 + gz * 60;
+        const brickId = globalTopGridData[globalIdx];
+        if (brickId > 0) {
+          freeBrickList.push(brickId);
+          globalTopGridData[globalIdx] = 0;
+          // Nol-kan brickPoolData di slot ini untuk mencegah data lama "bocor"
+          // kalau brickId ini dipakai ulang sebelum di-overwrite penuh oleh chunk baru.
+          globalBrickPoolData.fill(0, brickId * 512, brickId * 512 + 512);
+        }
+      }
+    }
+  }
+  isTopGridDirty = true;
+}
 
 export async function initComputeRT(canvas) {
   const adapter = await navigator.gpu.requestAdapter();
@@ -90,51 +130,53 @@ export async function initComputeRT(canvas) {
       return { destroy: () => {} };
     },
 
-    // Membangun StorageBuffer di VRAM dari data BrickMap mentah
+    // Membangun StorageBuffer di VRAM dari data BrickMap mentah.
+    // Setiap sub-sektor (2x5x2 per chunk) yang punya brick dialokasikan SATU PER SATU
+    // lewat allocBrick(), supaya slot yang dibebaskan freeChunkVolume() bisa dipakai ulang
+    // (kalau dialokasikan sekaligus secara kontigu seperti sebelumnya, reuse jadi tidak mungkin
+    // karena freeBrickList bisa berisi index yang tersebar/non-kontigu).
     createVoxelVolume(cx, cz, topGridData, brickPoolData) {
       if (!topGridData) return { destroy: () => {} };
-      
-      const poolSize = brickPoolData.length / 512;
-      const newBricks = poolSize - 1;
-      const startIndex = globalBrickCount;
-      
-      // Salin BrickPool ke Buffer Global (Hanya yang baru)
-      if (newBricks > 0) {
-        const brickDestOffset = startIndex * 512;
-        globalBrickPoolData.set(brickPoolData.subarray(512), brickDestOffset);
-        
-        // Daftarkan ke antrean Dirty (Pembaruan Sebagian)
-        dirtyBrickPoolQueue.push({
-            byteOffset: brickDestOffset,
-            dataOffset: brickDestOffset,
-            byteSize: newBricks * 512
-        });
-        
-        globalBrickCount += newBricks;
-      }
-      
+
       isTopGridDirty = true;
-      
-      // Salin TopGrid ke Buffer Global
-      for(let sz=0; sz<2; sz++) {
-        for(let sy=0; sy<5; sy++) {
-          for(let sx=0; sx<2; sx++) {
-             const localIdx = sx + sy * 2 + sz * 10;
-             let brickId = topGridData[localIdx];
-             if (brickId > 0) brickId += startIndex - 1;
-             
-             const gx = cx * 2 + sx;
-             const gz = cz * 2 + sz;
-             const globalIdx = gx + sy * 12 + gz * 60;
-             globalTopGridData[globalIdx] = brickId;
+
+      for (let sz = 0; sz < 2; sz++) {
+        for (let sy = 0; sy < 5; sy++) {
+          for (let sx = 0; sx < 2; sx++) {
+            const localIdx = sx + sy * 2 + sz * 10;
+            const localBrickId = topGridData[localIdx];
+
+            const gx = cx * 2 + sx;
+            const gz = cz * 2 + sz;
+            const globalIdx = gx + sy * 12 + gz * 60;
+
+            if (localBrickId === 0) {
+              globalTopGridData[globalIdx] = 0;
+              continue;
+            }
+
+            const brickId = allocBrick();
+            const srcOffset = localBrickId * 512;
+            const destOffset = brickId * 512;
+            globalBrickPoolData.set(
+              brickPoolData.subarray(srcOffset, srcOffset + 512),
+              destOffset
+            );
+
+            dirtyBrickPoolQueue.push({
+              byteOffset: destOffset,
+              dataOffset: destOffset,
+              byteSize: 512
+            });
+
+            globalTopGridData[globalIdx] = brickId;
           }
         }
       }
 
+      // destroy() melepas brick chunk ini kembali ke freeBrickList (lihat freeChunkVolume di atas).
       return {
-        topGridBuffer: null,
-        brickPoolBuffer: null,
-        destroy: () => {}
+        destroy: () => freeChunkVolume(cx, cz)
       };
     },
     
@@ -168,11 +210,11 @@ export async function initComputeRT(canvas) {
         const localIdx = lx + ly * 8 + lz * 64;
         
         if (brickId === 0) {
-            if (type === 0) return; // Menghapus udara = tidak ada efek
-            // Alokasikan memori baru untuk Brick (Chunk baru)
-            brickId = globalBrickCount++;
-            globalTopGridData[sectorIdx] = brickId;
-            isTopGridDirty = true;
+          if (type === 0) return; // Menghapus udara = tidak ada efek
+          // Alokasikan memori baru untuk Brick (Chunk baru) menggunakan allocBrick()
+          brickId = allocBrick();
+          globalTopGridData[sectorIdx] = brickId;
+          isTopGridDirty = true;
         }
         
         const voxelOffset = brickId * 512 + localIdx;
@@ -205,6 +247,9 @@ export async function initComputeRT(canvas) {
       uniformArray.set(up, 12);
       uniformArray[16] = canvas.width;
       uniformArray[17] = canvas.height;
+      // Slot 18 = Camera.debugMode (Fase 0.3). Slot 19 tetap padding, tidak dipakai.
+      const debugSelect = document.getElementById('debug-select');
+      uniformArray[18] = debugSelect ? Number(debugSelect.value) : 0;
       device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
       
       // Hanya perbarui VRAM jika ada perubahan (Dirty Flags)
@@ -255,6 +300,15 @@ export async function initComputeRT(canvas) {
       pass.end();
 
       device.queue.submit([encoder.finish()]);
+    }
+    ,
+    // Diagnostic info for runtime inspection (used by CommandBus)
+    getDiagnostics() {
+      return {
+        globalBrickCount,
+        freeBrickListLength: freeBrickList.length,
+        freeBrickListSample: freeBrickList.slice(Math.max(0, freeBrickList.length - 8))
+      };
     }
   };
 }

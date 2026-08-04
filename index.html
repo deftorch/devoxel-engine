@@ -26,6 +26,9 @@
     <option value="normal">Normal (Perlin Noise)</option>
     <option value="homogeneous">Homogen (Best untuk Octree)</option>
     <option value="checkerboard">Catur (Worst untuk Octree)</option>
+    <option value="gi-box">[GI] Box + Lubang Langit-langit</option>
+    <option value="gi-lshape">[GI] Lorong L (uji bounce)</option>
+    <option value="gi-colorwall">[GI] Dinding Merah/Salju (color bleeding)</option>
   </select>
 
   <div style="margin-top:8px;">3. Mesin Render (Pipeline):</div>
@@ -34,7 +37,16 @@
     <option value="raytrace">VoxelRT (Compute Raycast) - Eksperimental</option>
   </select>
 
+  <div style="margin-top:8px;">4. Debug View (khusus VoxelRT):</div>
+  <select id="debug-select" style="margin-top:4px; background:#141b26; color:#cfe8ff; border:1px solid rgba(120,170,255,0.4); padding:6px; width:100%; border-radius:4px;">
+    <option value="0">Normal</option>
+    <option value="1">Radiance Only</option>
+    <option value="2">Normal as Color</option>
+    <option value="3">AO Only</option>
+  </select>
+
   <button id="rebuild-btn" style="margin-top:12px; width:100%; background:#1c2635; color:#cfe8ff; border:1px solid #7fd4ff; border-radius:4px; padding:6px; cursor:pointer;">Mulai Benchmark</button>
+  <button id="rt-diag-btn" style="margin-top:8px; width:100%; background:#113344; color:#cfe8ff; border:1px solid #7fd4ff; border-radius:4px; padding:6px; cursor:pointer;">RT Diagnostics (salin)</button>
 </div>
 
 <div id="overlay">

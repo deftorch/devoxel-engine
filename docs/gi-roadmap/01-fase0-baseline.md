@@ -35,6 +35,13 @@ Tambahkan juga guard yang sama di event listener `render-select` (baris ~93-101)
 lain saat `render-select` diganti ke `raytrace`, daripada menampilkan error. Pilih salah satu —
 dokumentasikan pilihannya di sini setelah diputuskan.
 
+> **Keputusan (diimplementasikan):** pesan error eksplisit, BUKAN auto-switch. Alasan: auto-switch
+> diam-diam mengubah pilihan storage yang sudah dipilih user, yang bisa membingungkan saat user
+> sedang membandingkan storage type (tujuan utama benchmark tool ini). Guard ditaruh di dua tempat:
+> `buildWorld()` (menutup semua jalur masuk, termasuk initial load) dan event listener
+> `render-select` (mencegah pipeline WebGPU baru dibuat sia-sia sebelum akhirnya gagal lagi di
+> `buildWorld()`). Lihat `src/game/main.js`.
+
 ### 0.2 — Freelist brick pool untuk mode raytrace
 **File:** `src/core/renderer/webgpu/compute_rt.js`
 

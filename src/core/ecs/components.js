@@ -61,18 +61,18 @@ observe(world, onRemove(RenderMesh), (eid) => {
   RenderMesh.meshes[eid] = null;
 });
 
-/** 
- * Component for storing raw GPU Storage Buffers (TopGrid & BrickPool) for VoxelRT
- * @type {{topGridBuffer: Array<Object>, brickPoolBuffer: Array<Object>}} 
+/**
+ * Component for storing the VoxelRT volume handle returned by renderer.createVoxelVolume().
+ * Menyimpan objek `volume` itu sendiri (bukan .topGridBuffer/.brickPoolBuffer terpisah — untuk
+ * mode raytrace, storage-nya global/shared, jadi yang relevan per-entity hanya handle destroy()-nya).
+ * @type {{volume: Array<Object>}}
  */
-export const VoxelVolume = { topGridBuffer: [], brickPoolBuffer: [] };
+export const VoxelVolume = { volume: [] };
 
-// Automatically clean up GPU resources when the VoxelVolume component is removed
+// Automatically free the entity's brick pool slots (freeChunkVolume) when the component is removed
 observe(world, onRemove(VoxelVolume), (eid) => {
-  VoxelVolume.topGridBuffer[eid]?.destroy();
-  VoxelVolume.topGridBuffer[eid] = null;
-  VoxelVolume.brickPoolBuffer[eid]?.destroy();
-  VoxelVolume.brickPoolBuffer[eid] = null;
+  VoxelVolume.volume[eid]?.destroy();
+  VoxelVolume.volume[eid] = null;
 });
 
 /**

@@ -44,8 +44,7 @@ async function main() {
       const volume = renderer.createVoxelVolume(cx, cz, rtData.topGrid, rtData.brickPool);
       addGrowable(world, eid, Renderable);
       addComponent(world, eid, VoxelVolume);
-      VoxelVolume.topGridBuffer[eid] = volume.topGridBuffer;
-      VoxelVolume.brickPoolBuffer[eid] = volume.brickPoolBuffer;
+      VoxelVolume.volume[eid] = volume;
     }
     
     chunkEntities.push(eid);
@@ -54,6 +53,17 @@ async function main() {
   let benchmarkStats = { type: 'flat', genMs: 0, meshMs: 0, nodes: 0 };
 
   async function buildWorld(storageType, terrainType, renderMode) {
+    // Fase 0.1: hanya BrickMapStorage yang punya serialize() (lihat BrickMapStorage.js:74).
+    // Kalau renderMode==='raytrace' tapi storageType!=='brickmap', mesher.worker.js akan
+    // mengirim rtData: null dan uploadChunkMesh akan diam-diam skip upload (layar kosong
+    // tanpa penjelasan). Ditangani di sini dengan pesan error eksplisit, bukan auto-switch,
+    // supaya pilihan storage user tidak diubah diam-diam.
+    if (renderMode === 'raytrace' && storageType !== 'brickmap') {
+      ui.fail(`Mode VoxelRT hanya mendukung storage 'brickmap'. ` +
+              `Storage '${storageType}' tidak punya serialize().`);
+      return;
+    }
+
     ui.overlay.classList.remove('hidden');
     
     while (chunkEntities.length > 0) {
@@ -89,14 +99,58 @@ async function main() {
     const terrainType = document.getElementById('terrain-select').value;
     buildWorld(storageType, terrainType, currentRenderMode);
   });
+
+  // One-shot RT diagnostics button (copy to clipboard + console)
+  const rtDiagBtn = document.getElementById('rt-diag-btn');
+  if (rtDiagBtn) {
+    rtDiagBtn.addEventListener('click', async () => {
+      try {
+        ui.setStatus('Mengambil diagnostics VoxelRT...', 0);
+        const res = await window.devoxelAPI.execute('getVoxelRTDiagnostics');
+        console.log('[RT DIAGNOSTICS]', res);
+        const text = JSON.stringify(res, null, 2);
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          ui.setStatus('Diagnostics VoxelRT disalin ke clipboard.', 1);
+        } else {
+          ui.setStatus('Diagnostics (lihat Console).', 1);
+        }
+        setTimeout(() => ui.hideOverlay(), 900);
+        setTimeout(() => ui.setStatus(''), 1500);
+      } catch (err) {
+        ui.fail('Gagal mengambil diagnostics VoxelRT:\n' + (err.stack || err.message));
+        setTimeout(() => ui.hideOverlay(), 2000);
+      }
+    });
+  }
   
   document.getElementById('render-select').addEventListener('change', async (e) => {
     currentRenderMode = e.target.value;
-    ui.setStatus(`Beralih ke mesin render: ${currentRenderMode}...`, 0);
-    renderer = await createRenderer(ui.canvas, currentRenderMode);
-    
+
     const storageType = document.getElementById('storage-select').value;
     const terrainType = document.getElementById('terrain-select').value;
+
+    // Guard yang sama seperti di buildWorld() (Fase 0.1): cek dulu SEBELUM membuat
+    // renderer/pipeline WebGPU baru, supaya kombinasi tidak valid tidak membuang biaya
+    // inisialisasi compute pipeline yang akan langsung dibuang lagi oleh buildWorld().
+    if (currentRenderMode === 'raytrace' && storageType !== 'brickmap') {
+      ui.fail(`Mode VoxelRT hanya mendukung storage 'brickmap'. ` +
+              `Storage '${storageType}' tidak punya serialize().`);
+      return;
+    }
+
+    ui.setStatus(`Beralih ke mesin render: ${currentRenderMode}...`, 0);
+    try {
+      renderer = await createRenderer(ui.canvas, currentRenderMode);
+    } catch (err) {
+      // Penting: kalau ini gagal tanpa try/catch, `renderer` tetap menunjuk ke renderer LAMA
+      // (misal raster) yang tidak punya method seperti createVoxelVolume — lalu buildWorld()
+      // di bawah tetap jalan dan gagal dengan error yang membingungkan ("X is not a function")
+      // padahal akar masalahnya ada di initComputeRT()/createRenderer(). Tampilkan errornya di sini.
+      ui.fail('Gagal beralih mesin render:\n' + (err.stack || err.message));
+      return;
+    }
+    
     buildWorld(storageType, terrainType, currentRenderMode);
   });
 
@@ -134,8 +188,29 @@ async function main() {
     })
   });
 
+  // Diagnostics for VoxelRT internals (if renderer supports it)
+  engineAPI.register({
+    name: 'getVoxelRTDiagnostics',
+    description: 'Inspect internal VoxelRT allocator state (globalBrickCount, freelist length).',
+    schema: { type: 'object', properties: {} },
+    handler: () => {
+      if (renderer && typeof renderer.getDiagnostics === 'function') return renderer.getDiagnostics();
+      return { error: 'Renderer does not expose VoxelRT diagnostics' };
+    }
+  });
+
   const input = new InputManager(ui.canvas);
   let lastRemoved = null;
+  let lastDiagnostics = null;
+
+  // Poll VoxelRT diagnostics periodically (1s) if renderer exposes them
+  setInterval(() => {
+    try {
+      if (renderer && typeof renderer.getDiagnostics === 'function') {
+        lastDiagnostics = renderer.getDiagnostics();
+      }
+    } catch (e) { /* ignore */ }
+  }, 1000);
 
   input.onKeyDown = (code) => {
     if (code !== 'KeyT') return;
@@ -144,6 +219,10 @@ async function main() {
     destroyChunkEntity(world, eid);
     lastRemoved = { eid, at: performance.now() };
     console.log(`[debug] Chunk entity ${eid} dihapus lewat removeEntity(); buffer di-destroy() via observer onRemove.`);
+    try {
+      const diag = renderer && typeof renderer.getDiagnostics === 'function' ? renderer.getDiagnostics() : null;
+      if (diag) console.log('[debug] VoxelRT diagnostics:', diag);
+    } catch (e) { console.warn('Gagal membaca diagnostics VoxelRT:', e); }
   };
 
   input.onMouseDown = (button) => {
@@ -244,7 +323,7 @@ async function main() {
       const chunkEids = query(world, [Renderable, ChunkCoord, RenderMesh]);
       renderer.draw(cameraState, chunkEids, Renderable, RenderMesh);
 
-      ui.updateHUD(fpsDisplay, chunkEntities.length, poolSize, cameraState, lastRemoved, benchmarkStats);
+      ui.updateHUD(fpsDisplay, chunkEntities.length, poolSize, cameraState, lastRemoved, benchmarkStats, lastDiagnostics);
 
       requestAnimationFrame(frame);
     } catch (err) {

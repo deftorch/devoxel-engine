@@ -5,7 +5,8 @@ struct Camera {
   right: vec4f,
   up: vec4f,
   resolution: vec2f,
-  padding: vec2f,
+  debugMode: f32,   // 0=normal, 1=radiance only, 2=normal-as-color, 3=AO only
+  padding: f32,
 }
 
 @group(0) @binding(0) var screen: texture_storage_2d<rgba8unorm, write>;
@@ -189,7 +190,8 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     if (voxelColor == 1u) { color = vec3f(0.2, 0.7, 0.2); }      // Rumput Hijau
     else if (voxelColor == 2u) { color = vec3f(0.5, 0.3, 0.1); } // Tanah Cokelat
     else if (voxelColor == 3u) { color = vec3f(0.6, 0.6, 0.6); } // Batu Abu-abu
-    else if (voxelColor == 4u) { color = vec3f(0.9, 0.9, 0.9); } // Salju / Lainnya
+    else if (voxelColor == 4u) { color = vec3f(0.9, 0.9, 0.9); } // Salju
+    else if (voxelColor == 5u) { color = vec3f(0.72, 0.14, 0.12); } // Bata Merah (uji gi-colorwall)
     else { color = vec3f(0.8, 0.1, 0.8); }                       // Error Magenta
     
     let offset = getVoxelOffset(mapPos.x, mapPos.y, mapPos.z);
@@ -226,22 +228,38 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     if (getVoxel(cPos.x - side2.x, cPos.y - side2.y, cPos.z - side2.z) > 0u) { ao -= 0.15; }
     ao = max(ao, 0.4);
     
-    // Penggabungan Akhir yang Mulus!
-    color = color * (ambient + sun) * ao;
-    
-    // Kabut (Fog) berdasarkan jarak
-    var t = 0.0;
-    if (mask.x) { t = (f32(mapPos.x) - ro.x + (1.0 - f32(rayStep.x)) * 0.5) / rd.x; }
-    else if (mask.y) { t = (f32(mapPos.y) - ro.y + (1.0 - f32(rayStep.y)) * 0.5) / rd.y; }
-    else { t = (f32(mapPos.z) - ro.z + (1.0 - f32(rayStep.z)) * 0.5) / rd.z; }
-    
-    let fog = exp(-t * 0.02);
-    let skyColor = vec3f(0.53, 0.81, 0.92); // Sama dengan Rasterisasi (#87ceeb)
-    color = mix(skyColor, color, fog); // Campur warna voxel dengan kabut atmosfer
+    // --- DEBUG VIEW MODES (Fase 0.3) ---
+    // Cabang debug ditaruh di sini (bukan di luar if/else) karena 'normal', 'ao', 'offset'
+    // dideklarasikan dengan 'let' di dalam blok if(hit) — tidak terlihat di luar blok itu di WGSL.
+    if (camera.debugMode > 0.5 && camera.debugMode < 1.5) {
+        color = vec3f(radiancePool[offset]); // grayscale radiance mentah
+    } else if (camera.debugMode > 1.5 && camera.debugMode < 2.5) {
+        color = normal * 0.5 + 0.5; // normal sebagai warna
+    } else if (camera.debugMode > 2.5) {
+        color = vec3f(ao); // AO saja
+    } else {
+        // Mode normal (0): pipeline pencahayaan penuh seperti biasa
+        // Penggabungan Akhir yang Mulus!
+        color = color * (ambient + sun) * ao;
+        
+        // Kabut (Fog) berdasarkan jarak
+        var t = 0.0;
+        if (mask.x) { t = (f32(mapPos.x) - ro.x + (1.0 - f32(rayStep.x)) * 0.5) / rd.x; }
+        else if (mask.y) { t = (f32(mapPos.y) - ro.y + (1.0 - f32(rayStep.y)) * 0.5) / rd.y; }
+        else { t = (f32(mapPos.z) - ro.z + (1.0 - f32(rayStep.z)) * 0.5) / rd.z; }
+        
+        let fog = exp(-t * 0.02);
+        let skyColor = vec3f(0.53, 0.81, 0.92); // Sama dengan Rasterisasi (#87ceeb)
+        color = mix(skyColor, color, fog); // Campur warna voxel dengan kabut atmosfer
+    }
     
   } else {
-    // --- MELeset (Render Langit Saja, Tanpa Grid/Matahari) ---
-    color = vec3f(0.53, 0.81, 0.92); // Warna langit solid (#87ceeb)
+    // --- MELESET (Render Langit, atau hitam pekat kalau lagi di mode debug) ---
+    if (camera.debugMode > 0.5) {
+        color = vec3f(0.0); // Hitam: menandakan ray tidak kena apa-apa, biar tidak rancu dgn permukaan
+    } else {
+        color = vec3f(0.53, 0.81, 0.92); // Warna langit solid (#87ceeb)
+    }
   }
 
   // Tulis ke Piksel Layar
