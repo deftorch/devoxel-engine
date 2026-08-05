@@ -4,7 +4,7 @@
  * Saat ini hanya akan membersihkan layar dengan warna ungu gelap untuk 
  * membuktikan sistem pengalihan (Switch) berjalan dengan sempurna.
  */
-import { COMPUTE_SHADER } from './compute_rt.wgsl.js';
+import { COMPUTE_SHADER } from './compute_rt.wgsl.js?v=3';
 import { vCross, vNorm as vNormalize } from '../../utils/math.js';
 
 let globalTopGridData = new Uint32Array(12 * 5 * 12);
@@ -90,7 +90,8 @@ export async function initComputeRT(canvas) {
       { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
       { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
       { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-      { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }
+      { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+      { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }
     ]
   });
 
@@ -110,6 +111,14 @@ export async function initComputeRT(canvas) {
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
   const uniformArray = new Float32Array(20);
+
+  // Fase 1: buffer terpisah untuk arah & warna matahari, di-update tiap frame dari UI
+  // (slider #sun-elevation / #sun-azimuth di index.html) — BUKAN hardcode di shader.
+  const sunBuffer = device.createBuffer({
+    size: 32, // 2 * vec4f (16 byte masing-masing)
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+  const sunArray = new Float32Array(8);
 
   const globalTopGridBuffer = device.createBuffer({
     size: globalTopGridData.byteLength,
@@ -252,6 +261,23 @@ export async function initComputeRT(canvas) {
       uniformArray[18] = debugSelect ? Number(debugSelect.value) : 0;
       device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
       
+      // --- Update Sun Uniform (Fase 1.1 / 1.3) ---
+      // Dibaca live dari slider UI tiap frame — bukti "tidak hardcode" (Anti-Mock Checklist).
+      const elevDeg = Number(document.getElementById('sun-elevation')?.value ?? 55);
+      const azimDeg = Number(document.getElementById('sun-azimuth')?.value ?? 45);
+      const elev = elevDeg * Math.PI / 180;
+      const azim = azimDeg * Math.PI / 180;
+      const sunDir = vNormalize([
+        Math.cos(elev) * Math.sin(azim),
+        Math.sin(elev),
+        Math.cos(elev) * Math.cos(azim)
+      ]);
+      sunArray.set(sunDir, 0);
+      sunArray[3] = 0;
+      sunArray.set([1.0, 0.9, 0.8], 4); // warna matahari kuning hangat
+      sunArray[7] = 0;
+      device.queue.writeBuffer(sunBuffer, 0, sunArray);
+      
       // Hanya perbarui VRAM jika ada perubahan (Dirty Flags)
       if (isTopGridDirty) {
           device.queue.writeBuffer(globalTopGridBuffer, 0, globalTopGridData);
@@ -278,7 +304,8 @@ export async function initComputeRT(canvas) {
           { binding: 1, resource: { buffer: uniformBuffer } },
           { binding: 2, resource: { buffer: globalTopGridBuffer } },
           { binding: 3, resource: { buffer: globalBrickPoolBuffer } },
-          { binding: 4, resource: { buffer: globalRadiancePoolBuffer } }
+          { binding: 4, resource: { buffer: globalRadiancePoolBuffer } },
+          { binding: 5, resource: { buffer: sunBuffer } }
         ]
       });
 

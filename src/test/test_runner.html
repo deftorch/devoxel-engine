@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Test Runner: VoxelRT</title>
+  <style>
+    body { background: #0f141e; color: #fff; font-family: monospace; padding: 20px; }
+    h2 { color: #7fd4ff; }
+    #test-output { background: #1c2635; padding: 15px; border-radius: 6px; line-height: 1.5; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <h2>Pengujian Otomatis VoxelRT (Headless WebGPU)</h2>
+  <div id="test-output"><i>Memuat tes...</i><br></div>
+
+  <script type="module">
+    import { runShadowTests } from './compute_rt.test.js';
+    
+    // Hapus teks "Memuat tes..."
+    document.getElementById('test-output').innerHTML = '';
+    
+    // Jalankan pengujian
+    runShadowTests();
+  </script>
+</body>
+</html>

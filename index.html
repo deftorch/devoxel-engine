@@ -45,6 +45,18 @@
     <option value="3">AO Only</option>
   </select>
 
+  <div style="margin-top:8px;">5. Arah Matahari (khusus VoxelRT):</div>
+  <label style="font-size:12px; opacity:0.8; display:block; margin-top:4px;">
+    Elevasi: <span id="sun-elevation-val">55</span>°
+  </label>
+  <input type="range" id="sun-elevation" min="0" max="90" value="55" step="1" style="width:100%;"
+         oninput="document.getElementById('sun-elevation-val').textContent = this.value;">
+  <label style="font-size:12px; opacity:0.8; display:block; margin-top:4px;">
+    Azimuth: <span id="sun-azimuth-val">45</span>°
+  </label>
+  <input type="range" id="sun-azimuth" min="0" max="360" value="45" step="1" style="width:100%;"
+         oninput="document.getElementById('sun-azimuth-val').textContent = this.value;">
+
   <button id="rebuild-btn" style="margin-top:12px; width:100%; background:#1c2635; color:#cfe8ff; border:1px solid #7fd4ff; border-radius:4px; padding:6px; cursor:pointer;">Mulai Benchmark</button>
   <button id="rt-diag-btn" style="margin-top:8px; width:100%; background:#113344; color:#cfe8ff; border:1px solid #7fd4ff; border-radius:4px; padding:6px; cursor:pointer;">RT Diagnostics (salin)</button>
 </div>
