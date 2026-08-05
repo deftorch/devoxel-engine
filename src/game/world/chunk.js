@@ -5,12 +5,16 @@ import { FlatGridStorage } from '../../core/voxel/FlatGridStorage.js';
 import { OctreeStorage } from '../../core/voxel/OctreeStorage.js';
 import { BrickMapStorage } from '../../core/voxel/BrickMapStorage.js';
 import { SVDAGStorage } from '../../core/voxel/SVDAGStorage.js';
+import { Tree64Storage } from '../../core/voxel/Tree64Storage.js';
+import { SDFStorage } from '../../core/voxel/SDFStorage.js';
 
 export function generateChunkVoxels(chunkX, chunkZ, storageType = 'flat', terrainType = 'normal') {
   let storage;
   if (storageType === 'octree') storage = new OctreeStorage(CHUNK_SX, CHUNK_SY, CHUNK_SZ);
   else if (storageType === 'brickmap') storage = new BrickMapStorage(CHUNK_SX, CHUNK_SY, CHUNK_SZ);
   else if (storageType === 'svdag') storage = new SVDAGStorage(CHUNK_SX, CHUNK_SY, CHUNK_SZ);
+  else if (storageType === 'tree64') storage = new Tree64Storage(CHUNK_SX, CHUNK_SY, CHUNK_SZ);
+  else if (storageType === 'sdf') storage = new SDFStorage(CHUNK_SX, CHUNK_SY, CHUNK_SZ);
   else storage = new FlatGridStorage(CHUNK_SX, CHUNK_SY, CHUNK_SZ);
   for (let x = 0; x < CHUNK_SX; x++) {
     for (let z = 0; z < CHUNK_SZ; z++) {
@@ -87,5 +91,10 @@ export function generateChunkVoxels(chunkX, chunkZ, storageType = 'flat', terrai
       }
     }
   }
+  
+  if (typeof storage.buildSDF === 'function') {
+    storage.buildSDF();
+  }
+  
   return storage;
 }
