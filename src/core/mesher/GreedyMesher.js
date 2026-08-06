@@ -24,10 +24,15 @@ export class GreedyMesher extends VoxelMesher {
     // kita cukup panggil fungsi abstrak .get(x,y,z) yang dimiliki semua storage!
     const quads = greedyMesh(dims, (x, y, z) => chunkStorage.get(x, y, z));
 
-    // Langkah 2: Ubah array quad menjadi Vertex Buffer dan Index Buffer
-    // Origin 0,0 digunakan di sini karena perhitungan offset posisi global per-chunk
-    // idealnya dilakukan di GPU (Vertex Shader) menggunakan Uniforms, bukan di-hardcode ke mesh.
-    const meshData = buildMeshFromQuads(quads, 0, 0);
+    let offsetX = 0, offsetZ = 0;
+    if (ctx && ctx.chunkCoord) {
+      offsetX = ctx.chunkCoord[0] * dims[0];
+      offsetZ = ctx.chunkCoord[2] * dims[2];
+    }
+    
+    // Shader saat ini belum memiliki instance/model matrix per-chunk, 
+    // jadi kita panggang (bake) posisi dunia langsung ke koordinat vertex.
+    const meshData = buildMeshFromQuads(quads, offsetX, offsetZ);
 
     return meshData;
   }

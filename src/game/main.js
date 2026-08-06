@@ -12,11 +12,12 @@ import {
   destroyChunkEntity,
 } from '../core/ecs/components.js';
 import { createMovementSystem } from '../core/ecs/systems.js';
-import { createRenderer } from '../core/renderer/index.js';
+import { VoxelEngine } from '../core/index.js';
 import { UIManager } from './ui/UIManager.js';
 import { InputManager } from './input/InputManager.js';
 import { ChunkMesherPool } from './world/ChunkMesherPool.js';
 import { CommandBus } from '../core/api/CommandBus.js';
+import { generateChunkVoxels } from './world/chunk.js';
 
 async function main() {
   const ui = new UIManager();
@@ -25,40 +26,94 @@ async function main() {
     ? document.getElementById('render-select').value
     : 'raster';
 
+  let engine;
   let renderer;
   try {
-    renderer = await createRenderer(ui.canvas, currentRenderMode);
+    engine = new VoxelEngine({
+      chunkSize: [CHUNK_SX, CHUNK_SY, CHUNK_SZ],
+      storage: 'flatgrid', // Default saat awal
+      mesher: 'greedy',
+      renderer: currentRenderMode === 'raytrace' ? 'raytrace' : 'webgpu'
+    });
+    await engine.start(ui.canvas);
+    renderer = engine.rendererPlugin;
   } catch (e) {
     ui.fail(e.message);
     return;
   }
 
   const chunkEntities = [];
+  const chunkEidMap = new Map();
+
+  function setupEngineListeners(engineInstance) {
+    // Bersihkan listener lama (berjaga-jaga jika menggunakan instance yang sama)
+    engineInstance.off('chunkCreated');
+    engineInstance.off('afterMesh');
+
+    // FASE 2: Sinkronisasi ECS
+    engineInstance.on('chunkCreated', (chunk) => {
+      const eid = addEntity(world);
+      addGrowable(world, eid, ChunkCoord);
+      ChunkCoord.cx[eid] = chunk.cx;
+      ChunkCoord.cz[eid] = chunk.cz;
+      chunkEidMap.set(`${chunk.cx},${chunk.cy},${chunk.cz}`, eid);
+      chunkEntities.push(eid);
+    });
+
+    engineInstance.on('afterMesh', ({ chunk, meshData }) => {
+      const eid = chunkEidMap.get(`${chunk.cx},${chunk.cy},${chunk.cz}`);
+      if (eid == null) return;
+
+      if (currentRenderMode === 'raster' && meshData && meshData.indexCount > 0) {
+        const mesh = renderer.createMesh(meshData.vertexData, meshData.indexData);
+        if (!Renderable.indexCount[eid]) {
+           addGrowable(world, eid, Renderable);
+           addComponent(world, eid, RenderMesh);
+        }
+        Renderable.indexCount[eid] = meshData.indexCount;
+        RenderMesh.meshes[eid] = mesh;
+      } else if (currentRenderMode === 'raytrace' && meshData && meshData.rtData) {
+        // Cek fallback jika error VoxelVolume
+        if (typeof renderer.createVoxelVolume !== 'function') {
+           console.error('[Error] renderer.createVoxelVolume tidak ditemukan! Renderer saat ini:', renderer);
+           return;
+        }
+        const volume = renderer.createVoxelVolume(chunk.cx, chunk.cz, meshData.rtData.topGrid, meshData.rtData.brickPool);
+        if (!VoxelVolume.volume[eid]) {
+           addGrowable(world, eid, Renderable);
+           addComponent(world, eid, VoxelVolume);
+        }
+        VoxelVolume.volume[eid] = volume;
+      }
+    });
+  }
+
+  // Panggil listener untuk engine pertama kali
+  if (engine) setupEngineListeners(engine);
+
   const poolSize = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 1));
   ui.setStatus(`Menyiapkan ${poolSize} worker…`, 0);
 
   const pool = new ChunkMesherPool(poolSize);
 
+  // FASE 3: Jembatan Worker ke Engine
   function uploadChunkMesh(cx, cz, vertexData, indexData, indexCount, rtData) {
-    const eid = addEntity(world);
-    addGrowable(world, eid, ChunkCoord);
-    ChunkCoord.cx[eid] = cx;
-    ChunkCoord.cz[eid] = cz;
+    const chunk = engine.getOrCreateChunk(cx, 0, cz);
+    
+    // Inject data storage dari main thread (cepat ~1ms per chunk)
+    const storageType = document.getElementById('storage-select').value;
+    const terrainType = document.getElementById('terrain-select').value;
+    chunk.storage = generateChunkVoxels(cx, cz, storageType, terrainType);
 
-    if (currentRenderMode === 'raster' && indexCount > 0 && vertexData) {
-      const mesh = renderer.createMesh(vertexData, indexData);
-      addGrowable(world, eid, Renderable);
-      addComponent(world, eid, RenderMesh);
-      Renderable.indexCount[eid] = indexCount;
-      RenderMesh.meshes[eid] = mesh;
-    } else if (currentRenderMode === 'raytrace' && rtData) {
-      const volume = renderer.createVoxelVolume(cx, cz, rtData.topGrid, rtData.brickPool);
-      addGrowable(world, eid, Renderable);
-      addComponent(world, eid, VoxelVolume);
-      VoxelVolume.volume[eid] = volume;
+    if (currentRenderMode === 'raster') {
+      chunk.mesh = { vertexData, indexData, indexCount };
+      chunk.dirty = false;
+      engine.emit('afterMesh', { chunk, meshData: chunk.mesh });
+    } else {
+      chunk.mesh = { rtData };
+      chunk.dirty = false;
+      engine.emit('afterMesh', { chunk, meshData: chunk.mesh });
     }
-
-    chunkEntities.push(eid);
   }
 
   let benchmarkStats = { type: 'flat', genMs: 0, meshMs: 0, nodes: 0 };
@@ -81,6 +136,8 @@ async function main() {
     while (chunkEntities.length > 0) {
       destroyChunkEntity(world, chunkEntities.pop());
     }
+    chunkEidMap.clear();
+    if (engine) engine.chunks.clear();
 
     benchmarkStats.type = storageType;
     try {
@@ -157,12 +214,16 @@ async function main() {
 
     ui.setStatus(`Beralih ke mesin render: ${currentRenderMode}...`, 0);
     try {
-      renderer = await createRenderer(ui.canvas, currentRenderMode);
+      engine = new VoxelEngine({
+        chunkSize: [CHUNK_SX, CHUNK_SY, CHUNK_SZ],
+        storage: storageType,
+        mesher: 'greedy',
+        renderer: currentRenderMode === 'raytrace' ? 'raytrace' : 'webgpu'
+      });
+      await engine.start(ui.canvas);
+      renderer = engine.rendererPlugin;
+      setupEngineListeners(engine);
     } catch (err) {
-      // Penting: kalau ini gagal tanpa try/catch, `renderer` tetap menunjuk ke renderer LAMA
-      // (misal raster) yang tidak punya method seperti createVoxelVolume — lalu buildWorld()
-      // di bawah tetap jalan dan gagal dengan error yang membingungkan ("X is not a function")
-      // padahal akar masalahnya ada di initComputeRT()/createRenderer(). Tampilkan errornya di sini.
       ui.fail('Gagal beralih mesin render:\n' + (err.stack || err.message));
       return;
     }
@@ -251,11 +312,7 @@ async function main() {
   };
 
   input.onMouseDown = (button) => {
-    if (currentRenderMode !== 'raytrace') {
-      ui.fail('Fitur klik (Edit) saat ini hanya tersedia di VoxelRT.');
-      setTimeout(() => ui.fail(''), 3000);
-      return;
-    }
+    // FASE 4: Alih Kontrol Raycasting (Dukung raster & raytrace)
 
     // Simple DDA Raycaster in JS (CPU side)
     const ro = [Position.x[player], Position.y[player], Position.z[player]];
@@ -298,7 +355,8 @@ async function main() {
         side = 2;
       }
 
-      const voxel = renderer.getVoxel(mapX, mapY, mapZ);
+      // FASE 4: Cek blok dengan engine.getVoxel (bukan renderer.getVoxel)
+      const voxel = engine.getVoxel(mapX, mapY, mapZ);
       if (voxel > 0) {
         hit = true;
         break;
@@ -308,7 +366,9 @@ async function main() {
     if (hit) {
       if (button === 0) {
         // Klik Kiri = Hancurkan (Set jadi Udara = 0)
-        renderer.editVoxel(mapX, mapY, mapZ, 0);
+        engine.setVoxel(mapX, mapY, mapZ, 0);
+        // Fallback untuk VoxelRT karena belum punya Event Sync dari engine ke shader
+        if (currentRenderMode === 'raytrace') renderer.editVoxel(mapX, mapY, mapZ, 0);
       } else if (button === 2) {
         // Klik Kanan = Bangun (Dirt = 2)
         let bx = mapX;
@@ -317,7 +377,8 @@ async function main() {
         if (side === 0) bx -= stepX;
         else if (side === 1) by -= stepY;
         else bz -= stepZ;
-        renderer.editVoxel(bx, by, bz, 2);
+        engine.setVoxel(bx, by, bz, 2);
+        if (currentRenderMode === 'raytrace') renderer.editVoxel(bx, by, bz, 2);
       }
     }
   };
@@ -343,6 +404,9 @@ async function main() {
       lastTime = now;
 
       movementSystem(dt);
+      
+      // FASE 5: Remesh Otomatis
+      engine.remeshDirtyChunks();
 
       fpsAcc += dt;
       fpsFrames++;

@@ -21,11 +21,13 @@ class FakeStorage {
 class FakeMesher {
   constructor() {
     this.markCalls = [];
+    this.lastCtx = null;
   }
   markChunkDirty(cx, cy, cz) {
     this.markCalls.push([cx, cy, cz]);
   }
-  generateMesh(storage) {
+  generateMesh(storage, ctx = null) {
+    this.lastCtx = ctx;
     return { vertexData: new Float32Array([1]), indexData: new Uint32Array([0]), voxelCount: storage.data.size };
   }
 }
@@ -152,6 +154,29 @@ describe('VoxelEngine — dirty tracking & meshing', () => {
     const rebuilt = engine.remeshDirtyChunks();
     assert.equal(rebuilt.length, 1);
     assert.equal(rebuilt[0].cx, 1);
+  });
+
+  test('remeshChunk passes ctx with working getNeighbor function', () => {
+    const engine = makeEngine();
+    // Buat chunk A (0,0,0)
+    engine.setVoxel(0, 0, 0, 1);
+    // Buat chunk B (1,0,0) di sebelahnya persis
+    engine.setVoxel(20, 0, 0, 7); 
+    
+    engine.remeshChunk(0, 0, 0);
+    const ctx = engine.mesherPlugin.lastCtx;
+    
+    assert.ok(ctx, 'ctx object harus dikirimkan ke generateMesh');
+    assert.deepEqual(ctx.chunkCoord, [0, 0, 0], 'chunkCoord harus menunjuk ke chunk yang sedang di-remesh');
+    
+    // Test 1: Intip ke sebelah kanan (Chunk B harusnya ada)
+    const neighborRight = ctx.getNeighbor(1, 0, 0);
+    assert.ok(neighborRight, 'getNeighbor(1,0,0) harus mereturn storage tetangga');
+    assert.equal(neighborRight.get(4, 0, 0), 7, 'Isi tetangga harus sesuai dengan yang kita buat (lokal x=4, val=7)');
+    
+    // Test 2: Intip ke sebelah kiri (Belum ada chunk yang dibuat)
+    const neighborLeft = ctx.getNeighbor(-1, 0, 0);
+    assert.equal(neighborLeft, null, 'getNeighbor(-1,0,0) harus mereturn null jika chunk belum ada');
   });
 });
 
