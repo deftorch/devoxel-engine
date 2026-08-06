@@ -14,8 +14,9 @@ export class GreedyMesher extends VoxelMesher {
   /**
    * Mengubah data voxel mentah menjadi geometri siap-render.
    * @param {Object} chunkStorage - Objek VoxelStorage (Bisa FlatGrid, Tree64, dll)
+   * @param {Object} [ctx] - Konteks opsional (seperti akses ke chunk tetangga)
    */
-  generateMesh(chunkStorage) {
+  generateMesh(chunkStorage, ctx = null) {
     const dims = chunkStorage.dims;
 
     // Langkah 1: Ekstrak "wajah" kubus dan gabungkan menjadi Quad besar (Greedy)

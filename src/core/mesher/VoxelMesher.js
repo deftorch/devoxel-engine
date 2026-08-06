@@ -10,9 +10,10 @@ export class VoxelMesher {
   /**
    * Dipanggil oleh VoxelEngine saat sebuah chunk harus dibangun ulang poligonnya.
    * @param {Object} chunkStorage - Objek penyimpanan voxel (contoh: FlatGridStorage, Tree64Storage)
+   * @param {Object} [ctx] - Konteks opsional (seperti akses ke chunk tetangga)
    * @returns {Object} Data Mesh (vertexData, indexData, indexCount)
    */
-  generateMesh(chunkStorage) {
+  generateMesh(chunkStorage, ctx = null) {
     throw new Error(`[VoxelMesher] generateMesh() belum diimplementasikan di ${this.name}!`);
   }
 

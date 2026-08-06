@@ -194,8 +194,13 @@ export class VoxelEngine {
     const chunk = this.getChunk(cx, cy, cz);
     if (!chunk) return null;
 
+    const ctx = {
+      chunkCoord: [cx, cy, cz],
+      getNeighbor: (dx, dy, dz) => this.getChunk(cx + dx, cy + dy, cz + dz)?.storage ?? null,
+    };
+
     this.emit('beforeMesh', chunk);
-    const meshData = this.mesherPlugin.generateMesh(chunk.storage);
+    const meshData = this.mesherPlugin.generateMesh(chunk.storage, ctx);
     chunk.mesh = meshData;
     chunk.dirty = false;
     this.emit('afterMesh', { chunk, meshData });
