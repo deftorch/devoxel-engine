@@ -19,7 +19,7 @@ export async function initWebGPU(canvas) {
 
   const module = device.createShaderModule({ code: SHADER });
   const uniformBuffer = device.createBuffer({
-    size: 80, 
+    size: 80,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
   const bindGroupLayout = device.createBindGroupLayout({
@@ -32,15 +32,18 @@ export async function initWebGPU(canvas) {
   const pipeline = device.createRenderPipeline({
     layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
     vertex: {
-      module, entryPoint: 'vs_main',
-      buffers: [{
-        arrayStride: 9 * 4,
-        attributes: [
-          { shaderLocation: 0, offset: 0, format: 'float32x3' },
-          { shaderLocation: 1, offset: 12, format: 'float32x3' },
-          { shaderLocation: 2, offset: 24, format: 'float32x3' },
-        ],
-      }],
+      module,
+      entryPoint: 'vs_main',
+      buffers: [
+        {
+          arrayStride: 9 * 4,
+          attributes: [
+            { shaderLocation: 0, offset: 0, format: 'float32x3' },
+            { shaderLocation: 1, offset: 12, format: 'float32x3' },
+            { shaderLocation: 2, offset: 24, format: 'float32x3' },
+          ],
+        },
+      ],
     },
     fragment: { module, entryPoint: 'fs_main', targets: [{ format }] },
     primitive: { topology: 'triangle-list', cullMode: 'back', frontFace: 'ccw' },
@@ -68,7 +71,7 @@ export async function initWebGPU(canvas) {
     });
   }
 
-  const uniformArray = new Float32Array(20); 
+  const uniformArray = new Float32Array(20);
 
   return {
     createMesh(vertexData, indexData) {
@@ -94,10 +97,10 @@ export async function initWebGPU(canvas) {
         destroy: () => {
           vertexBuffer.destroy();
           indexBuffer.destroy();
-        }
+        },
       };
     },
-    
+
     draw(cameraState, chunkEids, Renderable, RenderMesh) {
       ensureRenderTargets();
 
@@ -111,20 +114,25 @@ export async function initWebGPU(canvas) {
 
       uniformArray.set(viewProj, 0);
       uniformArray.set(eye, 16);
-      uniformArray[19] = 0.006; 
+      uniformArray[19] = 0.006;
       device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
 
       const encoder = device.createCommandEncoder();
       const pass = encoder.beginRenderPass({
-        colorAttachments: [{
-          view: msaaTexture.createView(),
-          resolveTarget: context.getCurrentTexture().createView(),
-          clearValue: { r: 0.53, g: 0.72, b: 0.86, a: 1 },
-          loadOp: 'clear', storeOp: 'discard',
-        }],
+        colorAttachments: [
+          {
+            view: msaaTexture.createView(),
+            resolveTarget: context.getCurrentTexture().createView(),
+            clearValue: { r: 0.53, g: 0.72, b: 0.86, a: 1 },
+            loadOp: 'clear',
+            storeOp: 'discard',
+          },
+        ],
         depthStencilAttachment: {
           view: depthTexture.createView(),
-          depthClearValue: 1.0, depthLoadOp: 'clear', depthStoreOp: 'store',
+          depthClearValue: 1.0,
+          depthLoadOp: 'clear',
+          depthStoreOp: 'store',
         },
       });
       pass.setPipeline(pipeline);
@@ -139,6 +147,6 @@ export async function initWebGPU(canvas) {
       }
       pass.end();
       device.queue.submit([encoder.finish()]);
-    }
+    },
   };
 }

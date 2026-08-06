@@ -1,4 +1,4 @@
-export const SHADER = /* wgsl */`
+export const SHADER = /* wgsl */ `
 struct Uniforms {
   viewProj : mat4x4<f32>,
   cameraPos : vec3<f32>,

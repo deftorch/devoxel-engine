@@ -2,16 +2,16 @@ import { VoxelStorage } from './VoxelStorage.js';
 
 class OctreeNode {
   constructor(val = 0) {
-    this.val = val; 
-    this.children = null; 
+    this.val = val;
+    this.children = null;
   }
 }
 
 export class OctreeStorage extends VoxelStorage {
   constructor(sx, sy, sz) {
     super([sx, sy, sz]);
-    this.rootSize = 64; 
-    this.root = new OctreeNode(0); 
+    this.rootSize = 64;
+    this.root = new OctreeNode(0);
     this.nodeCount = 1;
   }
 
@@ -30,7 +30,7 @@ export class OctreeStorage extends VoxelStorage {
     const x = cx >= half ? 1 : 0;
     const y = cy >= half ? 1 : 0;
     const z = cz >= half ? 1 : 0;
-    return x + (y * 2) + (z * 4);
+    return x + y * 2 + z * 4;
   }
 
   set(x, y, z, val) {
@@ -51,12 +51,12 @@ export class OctreeStorage extends VoxelStorage {
         node.children[i] = new OctreeNode(node.val);
         this.nodeCount++;
       }
-      node.val = -1; 
+      node.val = -1;
     }
 
     const half = size / 2;
     const cidx = this._getIndex(x - nx, y - ny, z - nz, size);
-    
+
     const childNx = nx + (cidx & 1 ? half : 0);
     const childNy = ny + (cidx & 2 ? half : 0);
     const childNz = nz + (cidx & 4 ? half : 0);

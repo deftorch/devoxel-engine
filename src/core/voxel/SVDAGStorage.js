@@ -40,7 +40,7 @@ export class SVDAGStorage {
     const buildNode = (x, y, z, size) => {
       // Base case: Leaf Voxel
       if (size === 1) {
-        return getVoxel(x, y, z); 
+        return getVoxel(x, y, z);
       }
 
       const half = size / 2;
@@ -52,7 +52,7 @@ export class SVDAGStorage {
         buildNode(x, y, z + half, half),
         buildNode(x + half, y, z + half, half),
         buildNode(x, y + half, z + half, half),
-        buildNode(x + half, y + half, z + half, half)
+        buildNode(x + half, y + half, z + half, half),
       ];
 
       // Optimasi Octree Biasa: Jika ke-8 anak identik, gabungkan jadi 1 Node Raksasa
@@ -69,15 +69,15 @@ export class SVDAGStorage {
       // Keajaiban SVDAG: Deduplikasi cabang yang polanya sama persis!
       // Kita gabungkan 8 pointer anak jadi 1 string unik.
       let hashStr = children.join(',');
-      
+
       // Jika pola cabang ini sudah pernah dibuat sebelumnya, pakai ulang (Pointer)
       if (hashMap.has(hashStr)) {
-        return hashMap.get(hashStr); 
+        return hashMap.get(hashStr);
       }
 
       // Jika belum ada, kita catat ini sebagai 1 Node unik baru di Memori GPU
       uniqueNodes++;
-      let pointer = "PTR_" + uniqueNodes;
+      let pointer = 'PTR_' + uniqueNodes;
       hashMap.set(hashStr, pointer);
       return pointer;
     };
@@ -85,7 +85,7 @@ export class SVDAGStorage {
     // Karena ukuran chunk 16x40x16, kita harus membuat root node ukuran kelipatan 2 terdekat
     // yaitu 64x64x64. (Udara di luar batas 40 akan otomatis dikompresi SVDAG dengan sempurna)
     buildNode(0, 0, 0, 64);
-    
+
     // Minimal selalu ada 1 node jika tidak 100% homogen
     return uniqueNodes === 0 ? 1 : uniqueNodes;
   }

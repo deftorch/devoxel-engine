@@ -2,21 +2,31 @@ export function hash2(x, z) {
   let n = (x * 374761393 + z * 668265263) | 0;
   n = (n ^ (n >>> 13)) * 1274126177;
   n = n ^ (n >>> 16);
-  return ((n >>> 0) / 4294967295);
+  return (n >>> 0) / 4294967295;
 }
-export function smooth(t) { return t * t * (3 - 2 * t); }
+export function smooth(t) {
+  return t * t * (3 - 2 * t);
+}
 export function valueNoise2D(x, z) {
-  const x0 = Math.floor(x), z0 = Math.floor(z);
-  const x1 = x0 + 1, z1 = z0 + 1;
-  const sx = smooth(x - x0), sz = smooth(z - z0);
-  const n00 = hash2(x0, z0), n10 = hash2(x1, z0);
-  const n01 = hash2(x0, z1), n11 = hash2(x1, z1);
+  const x0 = Math.floor(x),
+    z0 = Math.floor(z);
+  const x1 = x0 + 1,
+    z1 = z0 + 1;
+  const sx = smooth(x - x0),
+    sz = smooth(z - z0);
+  const n00 = hash2(x0, z0),
+    n10 = hash2(x1, z0);
+  const n01 = hash2(x0, z1),
+    n11 = hash2(x1, z1);
   const ix0 = n00 + (n10 - n00) * sx;
   const ix1 = n01 + (n11 - n01) * sx;
   return ix0 + (ix1 - ix0) * sz;
 }
 export function fbm(x, z, octaves = 4, lacunarity = 2.0, gain = 0.5) {
-  let amp = 0.5, freq = 1.0, sum = 0, norm = 0;
+  let amp = 0.5,
+    freq = 1.0,
+    sum = 0,
+    norm = 0;
   for (let i = 0; i < octaves; i++) {
     sum += valueNoise2D(x * freq, z * freq) * amp;
     norm += amp;
@@ -30,10 +40,11 @@ export function heightRaw(worldX, worldZ) {
   return 10 + n * 22;
 }
 export function heightAt(worldX, worldZ, chunk_sy) {
-  let sum = 0, wsum = 0;
+  let sum = 0,
+    wsum = 0;
   for (let dx = -1; dx <= 1; dx++) {
     for (let dz = -1; dz <= 1; dz++) {
-      const w = (dx === 0 && dz === 0) ? 4 : (dx === 0 || dz === 0) ? 2 : 1;
+      const w = dx === 0 && dz === 0 ? 4 : dx === 0 || dz === 0 ? 2 : 1;
       sum += heightRaw(worldX + dx, worldZ + dz) * w;
       wsum += w;
     }

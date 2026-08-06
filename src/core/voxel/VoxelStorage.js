@@ -15,7 +15,7 @@ export class VoxelStorage {
    * @returns {number} Block ID
    */
   get(x, y, z) {
-    throw new Error("Not implemented");
+    throw new Error('Not implemented');
   }
 
   /**
@@ -26,6 +26,6 @@ export class VoxelStorage {
    * @param {number} val - Block ID
    */
   set(x, y, z, val) {
-    throw new Error("Not implemented");
+    throw new Error('Not implemented');
   }
 }

@@ -1,0 +1,43 @@
+{
+  "name": "devoxel-engine",
+  "version": "0.1.0",
+  "description": "Devoxel — a pluggable, WebGPU/WebGL Universal Voxel Framework. Storage, meshing, and rendering are each swappable plugins resolved through a central PluginRegistry.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/deftorch/devoxel-engine"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node scripts/check-syntax.js",
+    "check-deps": "node scripts/check-bitecs-version.js",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "verify": "npm run check && npm run check-deps && npm run lint && npm test"
+  },
+  "keywords": [
+    "voxel",
+    "engine",
+    "webgpu",
+    "webgl",
+    "framework",
+    "pluggable"
+  ],
+  "comment_cdnDependencies": "This project has no build step: browser code imports dependencies directly from esm.sh instead of node_modules. This field is the single source of truth for that version — run `npm run check-deps` to verify every import site matches it, and update both together when bumping.",
+  "cdnDependencies": {
+    "bitecs": "0.4.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.8.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.9.0",
+    "prettier": "^3.9.6"
+  }
+}

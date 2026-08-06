@@ -1,14 +1,14 @@
 /**
  * ComputeRTRenderer (Stub)
  * Ini adalah cangkang (stub) untuk implementasi Voxel Ray Tracing di Fase 3.
- * Saat ini hanya akan membersihkan layar dengan warna ungu gelap untuk 
+ * Saat ini hanya akan membersihkan layar dengan warna ungu gelap untuk
  * membuktikan sistem pengalihan (Switch) berjalan dengan sempurna.
  */
-import { COMPUTE_SHADER } from './compute_rt.wgsl.js?v=3';
+import { COMPUTE_SHADER } from './raytrace.wgsl.js?v=3';
 import { vCross, vNorm as vNormalize } from '../../utils/math.js';
 
 let globalTopGridData = new Uint32Array(12 * 5 * 12);
-let globalBrickPoolData = new Uint8Array(50000 * 512); 
+let globalBrickPoolData = new Uint8Array(50000 * 512);
 let globalRadiancePoolData = new Float32Array(50000 * 512); // Memori baru untuk Cahaya
 
 let globalBrickCount = 1; // 0 is AIR
@@ -40,7 +40,8 @@ function freeChunkVolume(cx, cz) {
   for (let sz = 0; sz < 2; sz++) {
     for (let sy = 0; sy < 5; sy++) {
       for (let sx = 0; sx < 2; sx++) {
-        const gx = cx * 2 + sx, gz = cz * 2 + sz;
+        const gx = cx * 2 + sx,
+          gz = cz * 2 + sz;
         const globalIdx = gx + sy * 12 + gz * 60;
         const brickId = globalTopGridData[globalIdx];
         if (brickId > 0) {
@@ -61,7 +62,7 @@ export async function initComputeRT(canvas) {
   if (!adapter) throw new Error('Tidak ada GPU adapter yang cocok untuk Compute.');
   const device = await adapter.requestDevice();
   const context = canvas.getContext('webgpu');
-  
+
   // Wajib seragam dengan WGSL (rgba8unorm)
   const format = 'rgba8unorm';
 
@@ -69,13 +70,13 @@ export async function initComputeRT(canvas) {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     canvas.width = Math.floor(innerWidth * dpr);
     canvas.height = Math.floor(innerHeight * dpr);
-    
+
     // Wajib menambahkan STORAGE_BINDING agar Compute Shader bisa menggambar langsung ke Kanvas
-    context.configure({ 
-      device, 
-      format, 
+    context.configure({
+      device,
+      format,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.STORAGE_BINDING,
-      alphaMode: 'opaque' 
+      alphaMode: 'opaque',
     });
   }
   resize();
@@ -83,7 +84,7 @@ export async function initComputeRT(canvas) {
 
   // --- Inisialisasi Compute Pipeline ---
   const module = device.createShaderModule({ code: COMPUTE_SHADER });
-  
+
   const bindGroupLayout = device.createBindGroupLayout({
     entries: [
       { binding: 0, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: format } },
@@ -91,18 +92,18 @@ export async function initComputeRT(canvas) {
       { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
       { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
       { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-      { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }
-    ]
+      { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+    ],
   });
 
   const pipeline = device.createComputePipeline({
     layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
-    compute: { module, entryPoint: 'main' }
+    compute: { module, entryPoint: 'main' },
   });
 
   const lightPipeline = device.createComputePipeline({
     layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
-    compute: { module, entryPoint: 'light_injection' }
+    compute: { module, entryPoint: 'light_injection' },
   });
 
   // Buffer Seragam (Uniform) untuk mengirim Kamera
@@ -167,15 +168,12 @@ export async function initComputeRT(canvas) {
             const brickId = allocBrick();
             const srcOffset = localBrickId * 512;
             const destOffset = brickId * 512;
-            globalBrickPoolData.set(
-              brickPoolData.subarray(srcOffset, srcOffset + 512),
-              destOffset
-            );
+            globalBrickPoolData.set(brickPoolData.subarray(srcOffset, srcOffset + 512), destOffset);
 
             dirtyBrickPoolQueue.push({
               byteOffset: destOffset,
               dataOffset: destOffset,
-              byteSize: 512
+              byteSize: 512,
             });
 
             globalTopGridData[globalIdx] = brickId;
@@ -185,64 +183,64 @@ export async function initComputeRT(canvas) {
 
       // destroy() melepas brick chunk ini kembali ke freeBrickList (lihat freeChunkVolume di atas).
       return {
-        destroy: () => freeChunkVolume(cx, cz)
+        destroy: () => freeChunkVolume(cx, cz),
       };
     },
-    
+
     getVoxel(x, y, z) {
-        if (x < 0 || x >= 96 || y < 0 || y >= 40 || z < 0 || z >= 96) return 0;
-        const gx = Math.floor(x / 8);
-        const gy = Math.floor(y / 8);
-        const gz = Math.floor(z / 8);
-        const sectorIdx = gx + gy * 12 + gz * 60;
-        const brickId = globalTopGridData[sectorIdx];
-        if (brickId === 0) return 0;
-        
-        const lx = Math.floor(x) % 8;
-        const ly = Math.floor(y) % 8;
-        const lz = Math.floor(z) % 8;
-        return globalBrickPoolData[brickId * 512 + (lx + ly * 8 + lz * 64)];
+      if (x < 0 || x >= 96 || y < 0 || y >= 40 || z < 0 || z >= 96) return 0;
+      const gx = Math.floor(x / 8);
+      const gy = Math.floor(y / 8);
+      const gz = Math.floor(z / 8);
+      const sectorIdx = gx + gy * 12 + gz * 60;
+      const brickId = globalTopGridData[sectorIdx];
+      if (brickId === 0) return 0;
+
+      const lx = Math.floor(x) % 8;
+      const ly = Math.floor(y) % 8;
+      const lz = Math.floor(z) % 8;
+      return globalBrickPoolData[brickId * 512 + (lx + ly * 8 + lz * 64)];
     },
 
     editVoxel(x, y, z, type) {
-        if (x < 0 || x >= 96 || y < 0 || y >= 40 || z < 0 || z >= 96) return;
-        
-        const gx = Math.floor(x / 8);
-        const gy = Math.floor(y / 8);
-        const gz = Math.floor(z / 8);
-        const sectorIdx = gx + gy * 12 + gz * 60;
-        let brickId = globalTopGridData[sectorIdx];
-        
-        const lx = Math.floor(x) % 8;
-        const ly = Math.floor(y) % 8;
-        const lz = Math.floor(z) % 8;
-        const localIdx = lx + ly * 8 + lz * 64;
-        
-        if (brickId === 0) {
-          if (type === 0) return; // Menghapus udara = tidak ada efek
-          // Alokasikan memori baru untuk Brick (Chunk baru) menggunakan allocBrick()
-          brickId = allocBrick();
-          globalTopGridData[sectorIdx] = brickId;
-          isTopGridDirty = true;
-        }
-        
-        const voxelOffset = brickId * 512 + localIdx;
-        globalBrickPoolData[voxelOffset] = type;
-        
-        // WebGPU writeBuffer offset & size harus kelipatan 4 bytes,
-        // jadi kita perbarui seluruh blok 8x8x8 (512 byte) ini saja.
-        const brickDestOffset = brickId * 512;
-        dirtyBrickPoolQueue.push({
-            byteOffset: brickDestOffset,
-            dataOffset: brickDestOffset,
-            byteSize: 512
-        });
+      if (x < 0 || x >= 96 || y < 0 || y >= 40 || z < 0 || z >= 96) return;
+
+      const gx = Math.floor(x / 8);
+      const gy = Math.floor(y / 8);
+      const gz = Math.floor(z / 8);
+      const sectorIdx = gx + gy * 12 + gz * 60;
+      let brickId = globalTopGridData[sectorIdx];
+
+      const lx = Math.floor(x) % 8;
+      const ly = Math.floor(y) % 8;
+      const lz = Math.floor(z) % 8;
+      const localIdx = lx + ly * 8 + lz * 64;
+
+      if (brickId === 0) {
+        if (type === 0) return; // Menghapus udara = tidak ada efek
+        // Alokasikan memori baru untuk Brick (Chunk baru) menggunakan allocBrick()
+        brickId = allocBrick();
+        globalTopGridData[sectorIdx] = brickId;
+        isTopGridDirty = true;
+      }
+
+      const voxelOffset = brickId * 512 + localIdx;
+      globalBrickPoolData[voxelOffset] = type;
+
+      // WebGPU writeBuffer offset & size harus kelipatan 4 bytes,
+      // jadi kita perbarui seluruh blok 8x8x8 (512 byte) ini saja.
+      const brickDestOffset = brickId * 512;
+      dirtyBrickPoolQueue.push({
+        byteOffset: brickDestOffset,
+        dataOffset: brickDestOffset,
+        byteSize: 512,
+      });
     },
-    
+
     // Fungsi ini mengeksekusi (Dispatch) Compute Shader untuk menggambar ke Kanvas
     draw(cameraState, chunkEids, Renderable, RenderMesh) {
       const { eye, yaw, pitch } = cameraState;
-      
+
       // Kalkulasi Vektor Kamera
       const forward = [Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)];
       const upDir = [0, 1, 0];
@@ -260,43 +258,39 @@ export async function initComputeRT(canvas) {
       const debugSelect = document.getElementById('debug-select');
       uniformArray[18] = debugSelect ? Number(debugSelect.value) : 0;
       device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
-      
+
       // --- Update Sun Uniform (Fase 1.1 / 1.3) ---
       // Dibaca live dari slider UI tiap frame — bukti "tidak hardcode" (Anti-Mock Checklist).
       const elevDeg = Number(document.getElementById('sun-elevation')?.value ?? 55);
       const azimDeg = Number(document.getElementById('sun-azimuth')?.value ?? 45);
-      const elev = elevDeg * Math.PI / 180;
-      const azim = azimDeg * Math.PI / 180;
-      const sunDir = vNormalize([
-        Math.cos(elev) * Math.sin(azim),
-        Math.sin(elev),
-        Math.cos(elev) * Math.cos(azim)
-      ]);
+      const elev = (elevDeg * Math.PI) / 180;
+      const azim = (azimDeg * Math.PI) / 180;
+      const sunDir = vNormalize([Math.cos(elev) * Math.sin(azim), Math.sin(elev), Math.cos(elev) * Math.cos(azim)]);
       sunArray.set(sunDir, 0);
       sunArray[3] = 0;
       sunArray.set([1.0, 0.9, 0.8], 4); // warna matahari kuning hangat
       sunArray[7] = 0;
       device.queue.writeBuffer(sunBuffer, 0, sunArray);
-      
+
       // Hanya perbarui VRAM jika ada perubahan (Dirty Flags)
       if (isTopGridDirty) {
-          device.queue.writeBuffer(globalTopGridBuffer, 0, globalTopGridData);
-          isTopGridDirty = false;
+        device.queue.writeBuffer(globalTopGridBuffer, 0, globalTopGridData);
+        isTopGridDirty = false;
       }
-      
+
       for (const update of dirtyBrickPoolQueue) {
-          device.queue.writeBuffer(
-              globalBrickPoolBuffer, 
-              update.byteOffset, 
-              globalBrickPoolData, 
-              update.dataOffset, 
-              update.byteSize
-          );
+        device.queue.writeBuffer(
+          globalBrickPoolBuffer,
+          update.byteOffset,
+          globalBrickPoolData,
+          update.dataOffset,
+          update.byteSize
+        );
       }
       dirtyBrickPoolQueue = [];
 
       const currentTexture = context.getCurrentTexture();
-      
+
       const bindGroup = device.createBindGroup({
         layout: bindGroupLayout,
         entries: [
@@ -305,37 +299,36 @@ export async function initComputeRT(canvas) {
           { binding: 2, resource: { buffer: globalTopGridBuffer } },
           { binding: 3, resource: { buffer: globalBrickPoolBuffer } },
           { binding: 4, resource: { buffer: globalRadiancePoolBuffer } },
-          { binding: 5, resource: { buffer: sunBuffer } }
-        ]
+          { binding: 5, resource: { buffer: sunBuffer } },
+        ],
       });
 
       const encoder = device.createCommandEncoder();
       const pass = encoder.beginComputePass();
-      
+
       // Mengikat VRAM (Sama untuk kedua shader)
       pass.setBindGroup(0, bindGroup);
-      
+
       // TAHAP 1: Menembakkan cahaya matahari dari langit ke seluruh balok Voxel
       // Dunia kita lebarnya 96x96 voxel. Workgroup size = 8x8.
       pass.setPipeline(lightPipeline);
       pass.dispatchWorkgroups(Math.ceil(96 / 8), Math.ceil(96 / 8));
-      
+
       // TAHAP 2: Menggambar (Render) ke Piksel Layar
       pass.setPipeline(pipeline);
       pass.dispatchWorkgroups(Math.ceil(canvas.width / 16), Math.ceil(canvas.height / 16));
-      
+
       pass.end();
 
       device.queue.submit([encoder.finish()]);
-    }
-    ,
+    },
     // Diagnostic info for runtime inspection (used by CommandBus)
     getDiagnostics() {
       return {
         globalBrickCount,
         freeBrickListLength: freeBrickList.length,
-        freeBrickListSample: freeBrickList.slice(Math.max(0, freeBrickList.length - 8))
+        freeBrickListSample: freeBrickList.slice(Math.max(0, freeBrickList.length - 8)),
       };
-    }
+    },
   };
 }

@@ -6,12 +6,9 @@
  * Usage: node generate-block.js --name="Glass" --id=4 --color="[1,1,1]"
  */
 
-const fs = require('fs');
-const path = require('path');
-
 const args = process.argv.slice(2);
 const options = {};
-args.forEach(arg => {
+args.forEach((arg) => {
   if (arg.startsWith('--')) {
     const [key, value] = arg.substring(2).split('=');
     options[key] = value;
@@ -19,7 +16,7 @@ args.forEach(arg => {
 });
 
 if (!options.name || !options.id || !options.color) {
-  console.error("Usage: node generate-block.js --name=\"BlockName\" --id=ID --color=\"[R,G,B]\"");
+  console.error('Usage: node generate-block.js --name="BlockName" --id=ID --color="[R,G,B]"');
   process.exit(1);
 }
 

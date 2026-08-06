@@ -49,9 +49,9 @@ export const Position = growableComponent({ x: Float32Array, y: Float32Array, z:
 /** @type {{yaw: Float32Array, pitch: Float32Array, __ensure: Function}} */
 export const Look = growableComponent({ yaw: Float32Array, pitch: Float32Array }, 8);
 
-/** 
- * Non-TypedArray component for storing complex objects (like WebGPU buffers). 
- * @type {{meshes: Array<Object>}} 
+/**
+ * Non-TypedArray component for storing complex objects (like WebGPU buffers).
+ * @type {{meshes: Array<Object>}}
  */
 export const RenderMesh = { meshes: [] };
 

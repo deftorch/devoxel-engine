@@ -28,10 +28,10 @@ export class CommandBus {
    * @returns {Array<Object>} List of tool definitions.
    */
   getTools() {
-    return Array.from(this.commands.values()).map(cmd => ({
+    return Array.from(this.commands.values()).map((cmd) => ({
       name: cmd.name,
       description: cmd.description,
-      inputSchema: cmd.schema
+      inputSchema: cmd.schema,
     }));
   }
 

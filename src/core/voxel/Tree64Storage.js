@@ -2,12 +2,12 @@ import { VoxelStorage } from './VoxelStorage.js';
 
 class Tree64Node {
   constructor(val = 0) {
-    this.val = val; 
-    // Bitmask okupansi untuk 64 anak. 
+    this.val = val;
+    // Bitmask okupansi untuk 64 anak.
     // Menggunakan dua u32 untuk mempermudah passing ke WebGPU.
-    this.maskLow = 0;  // merepresentasikan okupansi anak 0-31
+    this.maskLow = 0; // merepresentasikan okupansi anak 0-31
     this.maskHigh = 0; // merepresentasikan okupansi anak 32-63
-    this.children = null; 
+    this.children = null;
   }
 }
 
@@ -16,8 +16,8 @@ export class Tree64Storage extends VoxelStorage {
     super([sx, sy, sz]);
     // Tree64 biasanya beroperasi maksimal pada dimensi berpangkat 4 (misal 64)
     // Depth: 64 -> 16 -> 4 -> 1 (hanya 3 level kedalaman)
-    this.rootSize = 64; 
-    this.root = new Tree64Node(0); 
+    this.rootSize = 64;
+    this.root = new Tree64Node(0);
     this.nodeCount = 1;
   }
 
@@ -36,7 +36,7 @@ export class Tree64Storage extends VoxelStorage {
     const segX = Math.floor(cx / quarter);
     const segY = Math.floor(cy / quarter);
     const segZ = Math.floor(cz / quarter);
-    return segX + (segY * 4) + (segZ * 16);
+    return segX + segY * 4 + segZ * 16;
   }
 
   _updateMask(node) {
@@ -49,7 +49,7 @@ export class Tree64Storage extends VoxelStorage {
     node.maskHigh = 0;
     for (let i = 0; i < 64; i++) {
       // Kita asumsikan val > 0 adalah blok/benda padat (okupansi = 1)
-      if (node.children[i].val !== 0) { 
+      if (node.children[i].val !== 0) {
         if (i < 32) {
           node.maskLow = (node.maskLow | (1 << i)) >>> 0;
         } else {
@@ -70,7 +70,7 @@ export class Tree64Storage extends VoxelStorage {
       node.val = val;
       return;
     }
-    
+
     // Jika tidak ada perubahan
     if (node.val === val) return;
 
@@ -86,10 +86,10 @@ export class Tree64Storage extends VoxelStorage {
 
     const quarter = size / 4;
     const cidx = this._getIndex(x - nx, y - ny, z - nz, size);
-    
+
     const childNx = nx + (cidx % 4) * quarter;
     const childNy = ny + (Math.floor(cidx / 4) % 4) * quarter;
-    const childNz = nz + (Math.floor(cidx / 16)) * quarter;
+    const childNz = nz + Math.floor(cidx / 16) * quarter;
 
     this._setRec(node.children[cidx], childNx, childNy, childNz, quarter, x, y, z, val);
 
@@ -117,7 +117,7 @@ export class Tree64Storage extends VoxelStorage {
     const cidx = this._getIndex(x - nx, y - ny, z - nz, size);
     const childNx = nx + (cidx % 4) * quarter;
     const childNy = ny + (Math.floor(cidx / 4) % 4) * quarter;
-    const childNz = nz + (Math.floor(cidx / 16)) * quarter;
+    const childNz = nz + Math.floor(cidx / 16) * quarter;
     return this._getRec(node.children[cidx], childNx, childNy, childNz, quarter, x, y, z);
   }
 }

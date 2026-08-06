@@ -39,14 +39,14 @@ export class SDFStorage extends VoxelStorage {
    */
   buildSDF() {
     if (!this.needsUpdate) return;
-    
+
     const [sx, sy, sz] = this.dims;
     const maxDist = Math.max(sx, sy, sz) + 1;
     const len = sx * sy * sz;
-    
+
     // Tahap 1: Inisialisasi - Jika padat = 0, jika udara = max (infinity)
     for (let i = 0; i < len; i++) {
-      this.sdf[i] = (this.data[i] > 0) ? 0 : maxDist;
+      this.sdf[i] = this.data[i] > 0 ? 0 : maxDist;
     }
 
     // Tahap 2: Forward Sweep (+x, +y, +z)
@@ -78,7 +78,7 @@ export class SDFStorage extends VoxelStorage {
         }
       }
     }
-    
+
     this.needsUpdate = false;
   }
 }

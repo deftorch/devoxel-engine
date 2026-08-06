@@ -1,147 +1,351 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="id">
-<head>
-<meta charset="UTF-8">
-<title>Cube Editor — WebGPU + bitECS Prototype</title>
-<style>
-  * { box-sizing: border-box; }
-  html, body { margin:0; padding:0; overflow:hidden; background:#0a0e14; font-family: 'Segoe UI', system-ui, sans-serif; color:#cfe8ff; }
-  #app { display:flex; flex-direction:column; height:100vh; width:100vw; }
+  <head>
+    <meta charset="UTF-8" />
+    <title>Cube Editor — WebGPU + bitECS Prototype</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background: #0a0e14;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        color: #cfe8ff;
+      }
+      #app {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        width: 100vw;
+      }
 
-  /* ---------- Toolbar ---------- */
-  #toolbar {
-    display:flex; align-items:center; gap:6px; padding:8px 12px;
-    background:#0d1219; border-bottom:1px solid rgba(120,170,255,0.15);
-    flex:0 0 auto; z-index:2;
-  }
-  #toolbar .title { font-weight:600; color:#7fd4ff; margin-right:14px; font-size:13px; letter-spacing:.3px; }
-  #toolbar button {
-    background:#141b26; color:#cfe8ff; border:1px solid rgba(120,170,255,0.2);
-    border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer;
-    display:flex; align-items:center; gap:5px; transition:background .12s, border-color .12s;
-  }
-  #toolbar button:hover:not(:disabled) { background:#1c2635; border-color:rgba(120,170,255,0.45); }
-  #toolbar button:disabled { opacity:.35; cursor:default; }
-  #toolbar .sep { width:1px; align-self:stretch; background:rgba(120,170,255,0.15); margin:0 6px; }
-  #toolbar .spacer { flex:1; }
-  #toolbar .hint { font-size:11px; color:#7f93ad; }
+      /* ---------- Toolbar ---------- */
+      #toolbar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 12px;
+        background: #0d1219;
+        border-bottom: 1px solid rgba(120, 170, 255, 0.15);
+        flex: 0 0 auto;
+        z-index: 2;
+      }
+      #toolbar .title {
+        font-weight: 600;
+        color: #7fd4ff;
+        margin-right: 14px;
+        font-size: 13px;
+        letter-spacing: 0.3px;
+      }
+      #toolbar button {
+        background: #141b26;
+        color: #cfe8ff;
+        border: 1px solid rgba(120, 170, 255, 0.2);
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 12px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        transition:
+          background 0.12s,
+          border-color 0.12s;
+      }
+      #toolbar button:hover:not(:disabled) {
+        background: #1c2635;
+        border-color: rgba(120, 170, 255, 0.45);
+      }
+      #toolbar button:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+      #toolbar .sep {
+        width: 1px;
+        align-self: stretch;
+        background: rgba(120, 170, 255, 0.15);
+        margin: 0 6px;
+      }
+      #toolbar .spacer {
+        flex: 1;
+      }
+      #toolbar .hint {
+        font-size: 11px;
+        color: #7f93ad;
+      }
 
-  /* ---------- Body layout ---------- */
-  #body { flex:1; display:flex; min-height:0; }
-  #outliner, #properties {
-    width:250px; flex:0 0 250px; background:#0d1219; overflow-y:auto;
-    border-right:1px solid rgba(120,170,255,0.15);
-  }
-  #properties { border-right:none; border-left:1px solid rgba(120,170,255,0.15); }
-  #viewport-wrap { flex:1; position:relative; min-width:0; }
-  canvas { display:block; width:100%; height:100%; cursor: grab; }
-  canvas.dragging { cursor: grabbing; }
+      /* ---------- Body layout ---------- */
+      #body {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+      }
+      #outliner,
+      #properties {
+        width: 250px;
+        flex: 0 0 250px;
+        background: #0d1219;
+        overflow-y: auto;
+        border-right: 1px solid rgba(120, 170, 255, 0.15);
+      }
+      #properties {
+        border-right: none;
+        border-left: 1px solid rgba(120, 170, 255, 0.15);
+      }
+      #viewport-wrap {
+        flex: 1;
+        position: relative;
+        min-width: 0;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        cursor: grab;
+      }
+      canvas.dragging {
+        cursor: grabbing;
+      }
 
-  .panel-header {
-    padding:9px 12px; font-size:11px; text-transform:uppercase; letter-spacing:.6px;
-    color:#7f93ad; border-bottom:1px solid rgba(120,170,255,0.12); position:sticky; top:0;
-    background:#0d1219;
-  }
+      .panel-header {
+        padding: 9px 12px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        color: #7f93ad;
+        border-bottom: 1px solid rgba(120, 170, 255, 0.12);
+        position: sticky;
+        top: 0;
+        background: #0d1219;
+      }
 
-  /* ---------- Outliner ---------- */
-  .node-row {
-    display:flex; align-items:center; gap:6px; padding:5px 10px; font-size:12.5px;
-    cursor:pointer; user-select:none; white-space:nowrap; border-left:2px solid transparent;
-  }
-  .node-row:hover { background:#131a24; }
-  .node-row.selected { background:#16324a; border-left-color:#7fd4ff; }
-  .node-row .swatch { width:9px; height:9px; border-radius:2px; flex:0 0 auto; }
-  .node-row .icon { flex:0 0 auto; opacity:.7; font-size:11px; width:12px; text-align:center; }
-  .node-row .name { overflow:hidden; text-overflow:ellipsis; flex:1; }
-  .node-row .name[contenteditable="true"] { outline:1px solid #7fd4ff; background:#0a0e14; border-radius:2px; padding:0 2px; }
-  #outliner-empty { padding:14px 12px; font-size:12px; color:#5f7288; line-height:1.5; }
+      /* ---------- Outliner ---------- */
+      .node-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 10px;
+        font-size: 12.5px;
+        cursor: pointer;
+        user-select: none;
+        white-space: nowrap;
+        border-left: 2px solid transparent;
+      }
+      .node-row:hover {
+        background: #131a24;
+      }
+      .node-row.selected {
+        background: #16324a;
+        border-left-color: #7fd4ff;
+      }
+      .node-row .swatch {
+        width: 9px;
+        height: 9px;
+        border-radius: 2px;
+        flex: 0 0 auto;
+      }
+      .node-row .icon {
+        flex: 0 0 auto;
+        opacity: 0.7;
+        font-size: 11px;
+        width: 12px;
+        text-align: center;
+      }
+      .node-row .name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        flex: 1;
+      }
+      .node-row .name[contenteditable='true'] {
+        outline: 1px solid #7fd4ff;
+        background: #0a0e14;
+        border-radius: 2px;
+        padding: 0 2px;
+      }
+      #outliner-empty {
+        padding: 14px 12px;
+        font-size: 12px;
+        color: #5f7288;
+        line-height: 1.5;
+      }
 
-  /* ---------- Properties ---------- */
-  .prop-group { padding:10px 12px; border-bottom:1px solid rgba(120,170,255,0.08); }
-  .prop-group label.title { display:block; font-size:11px; color:#7f93ad; margin-bottom:6px; }
-  .prop-row { display:flex; align-items:center; gap:6px; margin-bottom:6px; }
-  .prop-row:last-child { margin-bottom:0; }
-  .prop-row .field-label { width:14px; font-size:11px; color:#5f92c9; flex:0 0 auto; text-align:center; }
-  .prop-row input[type="number"] {
-    width:100%; background:#141b26; border:1px solid rgba(120,170,255,0.2); border-radius:4px;
-    color:#cfe8ff; font-size:12px; padding:4px 6px;
-  }
-  .prop-row input[type="number"]:focus { outline:none; border-color:#7fd4ff; }
-  .prop-group input[type="text"] {
-    width:100%; background:#141b26; border:1px solid rgba(120,170,255,0.2); border-radius:4px;
-    color:#cfe8ff; font-size:12.5px; padding:5px 7px;
-  }
-  .prop-group input[type="color"] {
-    width:100%; height:26px; background:#141b26; border:1px solid rgba(120,170,255,0.2);
-    border-radius:4px; padding:2px; cursor:pointer;
-  }
-  #properties-empty { padding:20px 14px; font-size:12px; color:#5f7288; line-height:1.5; text-align:center; }
+      /* ---------- Properties ---------- */
+      .prop-group {
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(120, 170, 255, 0.08);
+      }
+      .prop-group label.title {
+        display: block;
+        font-size: 11px;
+        color: #7f93ad;
+        margin-bottom: 6px;
+      }
+      .prop-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 6px;
+      }
+      .prop-row:last-child {
+        margin-bottom: 0;
+      }
+      .prop-row .field-label {
+        width: 14px;
+        font-size: 11px;
+        color: #5f92c9;
+        flex: 0 0 auto;
+        text-align: center;
+      }
+      .prop-row input[type='number'] {
+        width: 100%;
+        background: #141b26;
+        border: 1px solid rgba(120, 170, 255, 0.2);
+        border-radius: 4px;
+        color: #cfe8ff;
+        font-size: 12px;
+        padding: 4px 6px;
+      }
+      .prop-row input[type='number']:focus {
+        outline: none;
+        border-color: #7fd4ff;
+      }
+      .prop-group input[type='text'] {
+        width: 100%;
+        background: #141b26;
+        border: 1px solid rgba(120, 170, 255, 0.2);
+        border-radius: 4px;
+        color: #cfe8ff;
+        font-size: 12.5px;
+        padding: 5px 7px;
+      }
+      .prop-group input[type='color'] {
+        width: 100%;
+        height: 26px;
+        background: #141b26;
+        border: 1px solid rgba(120, 170, 255, 0.2);
+        border-radius: 4px;
+        padding: 2px;
+        cursor: pointer;
+      }
+      #properties-empty {
+        padding: 20px 14px;
+        font-size: 12px;
+        color: #5f7288;
+        line-height: 1.5;
+        text-align: center;
+      }
 
-  /* ---------- Viewport overlays ---------- */
-  #statusbar {
-    position:absolute; left:0; right:0; bottom:0; padding:6px 12px; font-size:11px;
-    color:#7f93ad; background:linear-gradient(0deg, rgba(10,14,20,.75), rgba(10,14,20,0));
-    pointer-events:none; display:flex; gap:16px;
-  }
-  #statusbar b { color:#7fd4ff; }
-  #overlay {
-    position:absolute; inset:0; background:#0a0e14; color:#cfe8ff;
-    display:flex; flex-direction:column; align-items:center; justify-content:center;
-    font-size:14px; z-index:10; gap:12px; text-align:center;
-  }
-  #overlay .bar { width:220px; height:5px; background:#1a2230; border-radius:4px; overflow:hidden; }
-  #overlay .fill { height:100%; width:0%; background:linear-gradient(90deg,#3fa9ff,#7fffd4); transition:width .1s; }
-  #err { color:#ff8080; white-space:pre-wrap; max-width:520px; font-size:12px; }
-  .hidden { display:none !important; }
-  #file-import { display:none; }
-</style>
-</head>
-<body>
-
-<div id="app">
-  <div id="toolbar">
-    <span class="title">CUBE EDITOR — prototype</span>
-    <button id="btn-add-cube">＋ Cube</button>
-    <button id="btn-add-group">＋ Group</button>
-    <button id="btn-duplicate" disabled>⧉ Duplicate</button>
-    <button id="btn-delete" disabled>✕ Delete</button>
-    <div class="sep"></div>
-    <button id="btn-undo" disabled>↶ Undo</button>
-    <button id="btn-redo" disabled>↷ Redo</button>
-    <div class="sep"></div>
-    <button id="btn-export">⬇ Export JSON</button>
-    <button id="btn-import">⬆ Import JSON</button>
-    <input type="file" id="file-import" accept="application/json">
-    <div class="spacer"></div>
-    <span class="hint">Klik = pilih &middot; Drag kiri = orbit &middot; Drag kanan = pan &middot; Scroll = zoom</span>
-  </div>
-
-  <div id="body">
-    <div id="outliner">
-      <div class="panel-header">Outliner</div>
-      <div id="outliner-list"></div>
-    </div>
-
-    <div id="viewport-wrap">
-      <canvas id="gpu-canvas"></canvas>
-      <div id="statusbar">
-        <span><b>FPS</b> <span id="stat-fps">0</span></span>
-        <span><b>Elemen</b> <span id="stat-count">0</span></span>
-        <span><b>Terpilih</b> <span id="stat-selected">—</span></span>
+      /* ---------- Viewport overlays ---------- */
+      #statusbar {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 6px 12px;
+        font-size: 11px;
+        color: #7f93ad;
+        background: linear-gradient(0deg, rgba(10, 14, 20, 0.75), rgba(10, 14, 20, 0));
+        pointer-events: none;
+        display: flex;
+        gap: 16px;
+      }
+      #statusbar b {
+        color: #7fd4ff;
+      }
+      #overlay {
+        position: absolute;
+        inset: 0;
+        background: #0a0e14;
+        color: #cfe8ff;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        z-index: 10;
+        gap: 12px;
+        text-align: center;
+      }
+      #overlay .bar {
+        width: 220px;
+        height: 5px;
+        background: #1a2230;
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      #overlay .fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #3fa9ff, #7fffd4);
+        transition: width 0.1s;
+      }
+      #err {
+        color: #ff8080;
+        white-space: pre-wrap;
+        max-width: 520px;
+        font-size: 12px;
+      }
+      .hidden {
+        display: none !important;
+      }
+      #file-import {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="toolbar">
+        <span class="title">CUBE EDITOR — prototype</span>
+        <button id="btn-add-cube">＋ Cube</button>
+        <button id="btn-add-group">＋ Group</button>
+        <button id="btn-duplicate" disabled>⧉ Duplicate</button>
+        <button id="btn-delete" disabled>✕ Delete</button>
+        <div class="sep"></div>
+        <button id="btn-undo" disabled>↶ Undo</button>
+        <button id="btn-redo" disabled>↷ Redo</button>
+        <div class="sep"></div>
+        <button id="btn-export">⬇ Export JSON</button>
+        <button id="btn-import">⬆ Import JSON</button>
+        <input type="file" id="file-import" accept="application/json" />
+        <div class="spacer"></div>
+        <span class="hint"
+          >Klik = pilih &middot; Drag kiri = orbit &middot; Drag kanan = pan &middot; Scroll = zoom</span
+        >
       </div>
-      <div id="overlay">
-        <div id="status">Menginisialisasi WebGPU…</div>
-        <div class="bar"><div class="fill" id="fill"></div></div>
+
+      <div id="body">
+        <div id="outliner">
+          <div class="panel-header">Outliner</div>
+          <div id="outliner-list"></div>
+        </div>
+
+        <div id="viewport-wrap">
+          <canvas id="gpu-canvas"></canvas>
+          <div id="statusbar">
+            <span><b>FPS</b> <span id="stat-fps">0</span></span>
+            <span><b>Elemen</b> <span id="stat-count">0</span></span>
+            <span><b>Terpilih</b> <span id="stat-selected">—</span></span>
+          </div>
+          <div id="overlay">
+            <div id="status">Menginisialisasi WebGPU…</div>
+            <div class="bar"><div class="fill" id="fill"></div></div>
+          </div>
+        </div>
+
+        <div id="properties">
+          <div class="panel-header">Properties</div>
+          <div id="properties-body">
+            <div id="properties-empty">Tidak ada elemen terpilih.<br />Tambahkan cube dari toolbar.</div>
+          </div>
+        </div>
       </div>
     </div>
 
-    <div id="properties">
-      <div class="panel-header">Properties</div>
-      <div id="properties-body"><div id="properties-empty">Tidak ada elemen terpilih.<br>Tambahkan cube dari toolbar.</div></div>
-    </div>
-  </div>
-</div>
-
-<script type="module" src="src/editor/editor.js"></script>
-</body>
+    <script type="module" src="src/editor/editor.js"></script>
+  </body>
 </html>

@@ -70,15 +70,17 @@ export async function initWebGL(canvas) {
       gl.bindVertexArray(null);
 
       return {
-        vao, vbo, ibo,
+        vao,
+        vbo,
+        ibo,
         destroy: () => {
           gl.deleteBuffer(vbo);
           gl.deleteBuffer(ibo);
           gl.deleteVertexArray(vao);
-        }
+        },
       };
     },
-    
+
     draw(cameraState, chunkEids, Renderable, RenderMesh) {
       gl.clearColor(0.53, 0.72, 0.86, 1.0);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -103,6 +105,6 @@ export async function initWebGL(canvas) {
         gl.drawElements(gl.TRIANGLES, Renderable.indexCount[eid], gl.UNSIGNED_INT, 0);
       }
       gl.bindVertexArray(null);
-    }
+    },
   };
 }

@@ -14,12 +14,7 @@
 export function mat4Perspective(fovY, aspect, near, far) {
   const f = 1 / Math.tan(fovY / 2);
   const nf = 1 / (near - far);
-  return new Float32Array([
-    f / aspect, 0, 0, 0,
-    0, f, 0, 0,
-    0, 0, far * nf, -1,
-    0, 0, near * far * nf, 0,
-  ]);
+  return new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, far * nf, -1, 0, 0, near * far * nf, 0]);
 }
 
 /**
@@ -28,7 +23,9 @@ export function mat4Perspective(fovY, aspect, near, far) {
  * @param {Vector3} b
  * @returns {Vector3} Resulting vector
  */
-export function vSub(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
+export function vSub(a, b) {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
 
 /**
  * Computes the cross product of two vectors.
@@ -36,7 +33,9 @@ export function vSub(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
  * @param {Vector3} b
  * @returns {Vector3} Resulting vector
  */
-export function vCross(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+export function vCross(a, b) {
+  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+}
 
 /**
  * Computes the dot product of two vectors.
@@ -44,14 +43,19 @@ export function vCross(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2],
  * @param {Vector3} b
  * @returns {number} Dot product
  */
-export function vDot(a, b) { return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }
+export function vDot(a, b) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
 
 /**
  * Normalizes a vector.
  * @param {Vector3} a
  * @returns {Vector3} Normalized vector
  */
-export function vNorm(a) { const l = Math.hypot(a[0],a[1],a[2]) || 1; return [a[0]/l, a[1]/l, a[2]/l]; }
+export function vNorm(a) {
+  const l = Math.hypot(a[0], a[1], a[2]) || 1;
+  return [a[0] / l, a[1] / l, a[2] / l];
+}
 
 /**
  * Creates a look-at view matrix.
@@ -65,10 +69,22 @@ export function mat4LookAt(eye, center, up) {
   const x = vNorm(vCross(up, z));
   const y = vCross(z, x);
   return new Float32Array([
-    x[0], y[0], z[0], 0,
-    x[1], y[1], z[1], 0,
-    x[2], y[2], z[2], 0,
-    -vDot(x, eye), -vDot(y, eye), -vDot(z, eye), 1,
+    x[0],
+    y[0],
+    z[0],
+    0,
+    x[1],
+    y[1],
+    z[1],
+    0,
+    x[2],
+    y[2],
+    z[2],
+    0,
+    -vDot(x, eye),
+    -vDot(y, eye),
+    -vDot(z, eye),
+    1,
   ]);
 }
 
@@ -83,7 +99,10 @@ export function mat4Multiply(a, b) {
   for (let c = 0; c < 4; c++) {
     for (let r = 0; r < 4; r++) {
       out[c * 4 + r] =
-        a[0*4+r]*b[c*4+0] + a[1*4+r]*b[c*4+1] + a[2*4+r]*b[c*4+2] + a[3*4+r]*b[c*4+3];
+        a[0 * 4 + r] * b[c * 4 + 0] +
+        a[1 * 4 + r] * b[c * 4 + 1] +
+        a[2 * 4 + r] * b[c * 4 + 2] +
+        a[3 * 4 + r] * b[c * 4 + 3];
     }
   }
   return out;
@@ -95,7 +114,9 @@ export function mat4Multiply(a, b) {
  * @param {Vector3} b
  * @returns {Vector3} Resulting vector
  */
-export function vAdd(a, b) { return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]; }
+export function vAdd(a, b) {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+}
 
 /**
  * Scales a vector by a scalar.
@@ -103,4 +124,6 @@ export function vAdd(a, b) { return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]; }
  * @param {number} s - Scalar
  * @returns {Vector3} Resulting vector
  */
-export function vScale(a, s) { return [a[0]*s, a[1]*s, a[2]*s]; }
+export function vScale(a, s) {
+  return [a[0] * s, a[1] * s, a[2] * s];
+}

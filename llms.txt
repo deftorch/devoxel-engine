@@ -1,19 +1,28 @@
 # Devoxel Engine
 
-> A modular, WebGPU-powered Voxel Engine architecture designed for high-performance chunk rendering and AI-driven development.
+> A pluggable, WebGPU/WebGL-powered Universal Voxel Framework: storage, meshing,
+> and rendering are each swappable plugins resolved through a central
+> PluginRegistry, designed for high-performance chunk rendering and AI-driven
+> development.
 
 ## Core Documentation
 
-- [AI Agent Rules](https://github.com/deftorch/devoxel-engine/blob/main/.github/agents/agents.md): Crucial rules for AI agents modifying this codebase.
-- [Skill Definition](https://github.com/deftorch/devoxel-engine/blob/main/skill.md): Engine capabilities and technical constraints.
+- [AGENTS.md](https://github.com/deftorch/devoxel-engine/blob/main/AGENTS.md): Tool-agnostic instructions for AI coding agents modifying this codebase.
+- [README.md](https://github.com/deftorch/devoxel-engine/blob/main/README.md): Pluggable system usage and naming conventions.
+- [NEXT_STEPS.md](https://github.com/deftorch/devoxel-engine/blob/main/NEXT_STEPS.md): Current known gaps and recommended order of work.
+- [docs/Voxel - berbagai pendekatan.md](https://github.com/deftorch/devoxel-engine/blob/main/docs/Voxel%20-%20berbagai%20pendekatan.md): Survey of voxel data structure / meshing / rendering approaches this framework accommodates.
+- [docs/gi-roadmap/](https://github.com/deftorch/devoxel-engine/blob/main/docs/gi-roadmap/): Phased global illumination implementation roadmap.
+- [skill.md](https://github.com/deftorch/devoxel-engine/blob/main/skill.md): Engine capabilities and technical constraints.
 
 ## Engine Structure
 
-- `/voxel-engine/src/core`: The shared core containing WebGPU renderers, bitECS components, and math utilities.
-- `/voxel-engine/src/game`: The runtime logic for the game, including chunk generation workers and UI.
-- `/voxel-engine/src/data`: The data-driven JSON registries (e.g., blocks, materials).
+- `/src/core`: The pluggable framework — `VoxelEngine`, `PluginRegistry`, base classes (`VoxelStorage`, `VoxelMesher`, `VoxelRenderer`), built-in plugins, WebGPU/WebGL renderers, bitECS components, math utilities.
+- `/src/game`: The game runtime logic, including chunk generation workers and UI.
+- `/src/editor`: The standalone voxel editor.
+- `/src/data`: The data-driven JS registries (e.g., blocks, materials).
+- `/src/test`: Tests (`node --test` style + browser-only WebGPU tests via `test_runner.html`).
 
 ## Entry Points
 
-- Game Runtime: `/voxel-engine/index.html`
-- Standalone Editor: `/voxel-engine/editor.html`
+- Game Runtime: `/index.html`
+- Standalone Editor: `/editor.html`

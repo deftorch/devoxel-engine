@@ -5,7 +5,8 @@ import { vNorm, vCross, vAdd, vScale } from '../utils/math.js';
 export function createMovementSystem(world, keys) {
   return function movementSystem(dt) {
     for (const eid of query(world, [Position, Look])) {
-      const yaw = Look.yaw[eid], pitch = Look.pitch[eid];
+      const yaw = Look.yaw[eid],
+        pitch = Look.pitch[eid];
       const forward = [Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)];
       const worldUp = [0, 1, 0];
       const right = vNorm(vCross(forward, worldUp));
@@ -28,5 +29,5 @@ export function createMovementSystem(world, keys) {
         Position.z[eid] += mv[2];
       }
     }
-  }
+  };
 }
