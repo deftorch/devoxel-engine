@@ -1,0 +1,5 @@
+[test]
+preload = ["./src/test/setup.js"]
+
+[module]
+"https://esm.sh/bitecs@0.4.0" = "bitecs"

@@ -1,4 +1,4 @@
-import { createWorld, addEntity, addComponent, query } from 'https://esm.sh/bitecs@0.4.0';
+import { createWorld, addEntity, addComponent, query } from 'bitecs';
 import { VoxelEngine } from '../core/index.js';
 import { Renderable, ChunkCoord, RenderMesh, addGrowable } from '../core/ecs/components.js';
 

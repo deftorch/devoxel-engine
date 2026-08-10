@@ -1,4 +1,4 @@
-import { observe, onRemove } from "https://esm.sh/bitecs@0.4.0";
+import { observe, onRemove } from "bitecs";
 import { world, growableComponent } from "../core/ecs/components.js";
 
 // origin = sudut "from" kubus, size = lebar/tinggi/dalam, pivot = titik

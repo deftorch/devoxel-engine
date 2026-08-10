@@ -1,4 +1,4 @@
-import { addEntity, removeEntity, addComponent } from "https://esm.sh/bitecs@0.4.0";
+import { addEntity, removeEntity, addComponent } from "bitecs";
 import { world, addGrowable, Renderable, RenderMesh } from "../core/ecs/components.js";
 import { Transform, ColorComp, NodeMeta, NameComp, EditorContext } from "./state.js";
 import History from "./history.js";
@@ -71,7 +71,7 @@ export function writeTransform(eid, t) {
   ColorComp.b[eid] = t.b;
 }
 
-function createNodeRaw(data) {
+export function createNodeRaw(data) {
   // data: {eid?, name, parent, isGroup, transform?, color?, orderIndex?}
   const eid = addEntity(world);
   addGrowable(world, eid, NodeMeta);
@@ -93,7 +93,7 @@ function createNodeRaw(data) {
   return eid;
 }
 
-function destroyNodeRaw(eid) {
+export function destroyNodeRaw(eid) {
   const idx = EditorContext.sceneOrder.indexOf(eid);
   if (idx >= 0) EditorContext.sceneOrder.splice(idx, 1);
   removeEntity(world, eid);

@@ -1,4 +1,4 @@
-import { createWorld, addComponent, removeEntity, observe, onRemove } from 'https://esm.sh/bitecs@0.4.0';
+import { createWorld, addComponent, removeEntity, observe, onRemove } from 'bitecs';
 
 export const world = createWorld();
 

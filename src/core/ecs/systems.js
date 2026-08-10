@@ -1,4 +1,4 @@
-import { query } from 'https://esm.sh/bitecs@0.4.0';
+import { query } from 'bitecs';
 import { Position, Look } from './components.js';
 import { vNorm, vCross, vAdd, vScale } from '../utils/math.js';
 

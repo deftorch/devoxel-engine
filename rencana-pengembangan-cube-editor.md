@@ -73,8 +73,8 @@ Sebelum menyentuh arsitektur apa pun.
 | `editor/io.js`            | Export/import JSON                                                                          |
 | `editor/main.js`          | Wiring antar modul + render loop (jauh lebih ramping)                                       |
 
-- [ ] Pindahkan section demi section (bukan sekaligus) — setiap pemindahan 1 modul, jalankan aplikasi, pastikan tidak ada regresi, baru lanjut ke modul berikutnya.
-- [ ] Ganti variabel module-scope global (`deviceRef`, `engineRef`, `camera`, dst) dengan satu objek `EditorContext`/`EditorState` eksplisit yang di-pass ke tiap modul — memudahkan testing dan menghindari _hidden coupling_ lewat closure.
+- [x] Pindahkan section demi section (bukan sekaligus) — setiap pemindahan 1 modul, jalankan aplikasi, pastikan tidak ada regresi, baru lanjut ke modul berikutnya.
+- [x] Ganti variabel module-scope global (`deviceRef`, `engineRef`, `camera`, dst) dengan satu objek `EditorContext`/`EditorState` eksplisit yang di-pass ke tiap modul — memudahkan testing dan menghindari _hidden coupling_ lewat closure.
 
 ---
 
@@ -82,10 +82,10 @@ Sebelum menyentuh arsitektur apa pun.
 
 **Tujuan:** saat ini hanya core engine (`VoxelEngine`, `PluginRegistry`, raytrace) yang punya test; logic editor (history, scene-ops, picking) nol coverage — risiko regresi tinggi begitu makin kompleks.
 
-- [ ] Unit test untuk `History` (undo/redo command pattern) — mudah karena sudah dipisah modulnya di Fase 4.
-- [ ] Unit test untuk `scene-ops.js` (add/remove/transform node, termasuk efeknya ke `NodeMeta`/`sceneOrder`).
-- [ ] Unit test untuk raycast/OBB picking dengan kasus-kasus geometris yang diketahui hasilnya.
-- [ ] (Opsional, nice-to-have) Test rendering non-visual: pastikan `drawDebugPrimitives()` dipanggil dengan data yang benar (mock renderer), tanpa perlu render GPU sungguhan.
+- [x] Unit test untuk `History` (undo/redo command pattern) — mudah karena sudah dipisah modulnya di Fase 4.
+- [x] Unit test untuk `scene-ops.js` (add/remove/transform node, termasuk efeknya ke `NodeMeta`/`sceneOrder`).
+- [x] Unit test untuk raycast/OBB picking dengan kasus-kasus geometris yang diketahui hasilnya.
+- [x] (Opsional, nice-to-have) Test rendering non-visual: pastikan `drawDebugPrimitives()` dipanggil dengan data yang benar (mock renderer), tanpa perlu render GPU sungguhan.
 
 ---
 

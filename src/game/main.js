@@ -1,4 +1,4 @@
-import { addEntity, query, addComponent } from 'https://esm.sh/bitecs@0.4.0';
+import { addEntity, query, addComponent } from 'bitecs';
 import { WORLD_CHUNKS, CHUNK_SX, CHUNK_SY, CHUNK_SZ } from '../core/config.js';
 import {
   world,
