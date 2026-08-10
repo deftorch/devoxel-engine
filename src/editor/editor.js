@@ -314,6 +314,7 @@ function buildCubeMesh(t) {
 // -----------------------------------------------------------------------
 let engineRef = null;
 let deviceRef = null; // diisi setelah WebGPU siap
+let isWebGPU = false;
 
 function uploadMesh(eid, mesh) {
   RenderMesh.meshes[eid]?.destroy();
@@ -1184,119 +1185,157 @@ window.addEventListener('keydown', (e) => {
 // 13. Main / render loop
 // -----------------------------------------------------------------------
 async function main() {
-  setStatus('Menginisialisasi GPU...', 0);
-  try {
-    engineRef = new VoxelEngine({ chunkSize: [32, 32, 32], storage: 'flatgrid', mesher: 'greedy', renderer: 'webgpu' });
-    await engineRef.start(canvas);
-  } catch (err) { fail(err.message); return; }
+  setStatus('Mendeteksi GPU...', 0);
+  let targetRenderer = navigator.gpu ? 'webgpu' : 'webgl';
 
+  try {
+    setStatus(`Menginisialisasi ${targetRenderer.toUpperCase()}...`, 0);
+    engineRef = new VoxelEngine({ chunkSize: [32, 32, 32], storage: 'flatgrid', mesher: 'greedy', renderer: targetRenderer });
+    await engineRef.start(canvas);
+  } catch (err) { 
+    if (targetRenderer === 'webgpu') {
+      console.warn('WebGPU gagal diinisialisasi, mencoba fallback ke WebGL...', err);
+      try {
+        setStatus('Menginisialisasi WebGL (Fallback)...', 0);
+        engineRef = new VoxelEngine({ chunkSize: [32, 32, 32], storage: 'flatgrid', mesher: 'greedy', renderer: 'webgl' });
+        await engineRef.start(canvas);
+      } catch (fallbackErr) {
+        fail(fallbackErr.message);
+        return;
+      }
+    } else {
+      fail(err.message); 
+      return;
+    }
+  }
+
+  isWebGPU = engineRef.rendererPlugin.name === 'webgpu';
+  
   const renderer = engineRef.rendererPlugin.raw;
-  deviceRef = renderer.device;
-  const device = renderer.device;
-  const format = renderer.format;
+  let device = null;
+  let format = null;
+  
+  if (isWebGPU) {
+    deviceRef = renderer.device;
+    device = renderer.device;
+    format = renderer.format;
+  }
 
   setStatus('Menyiapkan pipeline…', 0.3);
 
-  // --- Line pipeline (grid + selection outline) ---
-  const lineModule = device.createShaderModule({ code: LINE_SHADER });
-  const lineUniformBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-  const lineBGL = device.createBindGroupLayout({
-    entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } }],
-  });
-  const lineBG = device.createBindGroup({
-    layout: lineBGL,
-    entries: [{ binding: 0, resource: { buffer: lineUniformBuffer } }],
-  });
-  const linePipeline = device.createRenderPipeline({
-    layout: device.createPipelineLayout({ bindGroupLayouts: [lineBGL] }),
-    vertex: {
-      module: lineModule,
-      entryPoint: 'vs_main',
-      buffers: [
-        {
-          arrayStride: 6 * 4,
-          attributes: [
-            { shaderLocation: 0, offset: 0, format: 'float32x3' },
-            { shaderLocation: 1, offset: 12, format: 'float32x3' },
-          ],
-        },
-      ],
-    },
-    fragment: { module: lineModule, entryPoint: 'fs_main', targets: [{ format }] },
-    primitive: { topology: 'line-list' },
-    depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
-    multisample: { count: 4 },
-  });
+  // --- Pipeline variables (grid + selection outline) ---
+  let lineModule, lineUniformBuffer, lineBG, linePipeline;
+  let gizmoTriPipeline, gizmoLinePipeline;
+  let gridVB, outlineVB, gizmoTriVB, gizmoLineVB;
+  let gridVertexCount = 0;
+  let OUTLINE_VERTS = 24;
+  let GIZMO_LINE_VERTS = 0;
+  let GIZMO_TRI_VERTS = 0;
+  let lineUniformArray = new Float32Array(16);
 
-  // --- Gizmo pipelines ---
-  const gizmoLinePipeline = device.createRenderPipeline({
-    layout: device.createPipelineLayout({ bindGroupLayouts: [lineBGL] }),
-    vertex: {
-      module: lineModule,
-      entryPoint: 'vs_main',
-      buffers: [
-        {
-          arrayStride: 6 * 4,
-          attributes: [
-            { shaderLocation: 0, offset: 0, format: 'float32x3' },
-            { shaderLocation: 1, offset: 12, format: 'float32x3' },
-          ],
-        },
-      ],
-    },
-    fragment: { module: lineModule, entryPoint: 'fs_main', targets: [{ format }] },
-    primitive: { topology: 'line-list' },
-    depthStencil: { format: 'depth24plus', depthWriteEnabled: false, depthCompare: 'always' },
-    multisample: { count: 4 },
-  });
-  const gizmoTriPipeline = device.createRenderPipeline({
-    layout: device.createPipelineLayout({ bindGroupLayouts: [lineBGL] }),
-    vertex: {
-      module: lineModule,
-      entryPoint: 'vs_main',
-      buffers: [
-        {
-          arrayStride: 6 * 4,
-          attributes: [
-            { shaderLocation: 0, offset: 0, format: 'float32x3' },
-            { shaderLocation: 1, offset: 12, format: 'float32x3' },
-          ],
-        },
-      ],
-    },
-    fragment: { module: lineModule, entryPoint: 'fs_main', targets: [{ format }] },
-    primitive: { topology: 'triangle-list', cullMode: 'none' },
-    depthStencil: { format: 'depth24plus', depthWriteEnabled: false, depthCompare: 'always' },
-    multisample: { count: 4 },
-  });
+  if (isWebGPU) {
+    lineModule = device.createShaderModule({ code: LINE_SHADER });
+    lineUniformBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    const lineBGL = device.createBindGroupLayout({
+      entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } }],
+    });
+    lineBG = device.createBindGroup({
+      layout: lineBGL,
+      entries: [{ binding: 0, resource: { buffer: lineUniformBuffer } }],
+    });
+    linePipeline = device.createRenderPipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [lineBGL] }),
+      vertex: {
+        module: lineModule,
+        entryPoint: 'vs_main',
+        buffers: [
+          {
+            arrayStride: 6 * 4,
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: 'float32x3' },
+              { shaderLocation: 1, offset: 12, format: 'float32x3' },
+            ],
+          },
+        ],
+      },
+      fragment: { module: lineModule, entryPoint: 'fs_main', targets: [{ format }] },
+      primitive: { topology: 'line-list' },
+      depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
+      multisample: { count: 4 },
+    });
 
-  // Grid statis
-  const gridLines = buildGridLines(32, 2);
-  const gridVertexData = interleaveLine(gridLines.positions, gridLines.colors);
-  const gridVB = device.createBuffer({
-    size: gridVertexData.byteLength,
-    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    mappedAtCreation: true,
-  });
-  new Float32Array(gridVB.getMappedRange()).set(gridVertexData);
-  gridVB.unmap();
-  const gridVertexCount = gridVertexData.length / 6;
+    // --- Gizmo pipelines ---
+    gizmoLinePipeline = device.createRenderPipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [lineBGL] }),
+      vertex: {
+        module: lineModule,
+        entryPoint: 'vs_main',
+        buffers: [
+          {
+            arrayStride: 6 * 4,
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: 'float32x3' },
+              { shaderLocation: 1, offset: 12, format: 'float32x3' },
+            ],
+          },
+        ],
+      },
+      fragment: { module: lineModule, entryPoint: 'fs_main', targets: [{ format }] },
+      primitive: { topology: 'line-list' },
+      depthStencil: { format: 'depth24plus', depthWriteEnabled: false, depthCompare: 'always' },
+      multisample: { count: 4 },
+    });
+    gizmoTriPipeline = device.createRenderPipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [lineBGL] }),
+      vertex: {
+        module: lineModule,
+        entryPoint: 'vs_main',
+        buffers: [
+          {
+            arrayStride: 6 * 4,
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: 'float32x3' },
+              { shaderLocation: 1, offset: 12, format: 'float32x3' },
+            ],
+          },
+        ],
+      },
+      fragment: { module: lineModule, entryPoint: 'fs_main', targets: [{ format }] },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      depthStencil: { format: 'depth24plus', depthWriteEnabled: false, depthCompare: 'always' },
+      multisample: { count: 4 },
+    });
 
-  const OUTLINE_VERTS = 24; 
-  const outlineVB = device.createBuffer({
-    size: OUTLINE_VERTS * 6 * 4,
-    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-  });
-  const GIZMO_LINE_VERTS = GIZMO_AXES.length * 2;
-  const GIZMO_TRI_VERTS = GIZMO_AXES.length * GIZMO_HEAD_SEGMENTS * 3;
-  const gizmoLineVB = device.createBuffer({
-    size: GIZMO_LINE_VERTS * 6 * 4,
-    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-  });
-  const gizmoTriVB = device.createBuffer({
-    size: GIZMO_TRI_VERTS * 6 * 4,
-    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-  });
+    // Grid statis
+    const gridLines = buildGridLines(32, 2);
+    const gridVertexData = interleaveLine(gridLines.positions, gridLines.colors);
+    gridVB = device.createBuffer({
+      size: gridVertexData.byteLength,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      mappedAtCreation: true,
+    });
+    new Float32Array(gridVB.getMappedRange()).set(gridVertexData);
+    gridVB.unmap();
+    gridVertexCount = gridVertexData.length / 6;
+
+    outlineVB = device.createBuffer({
+      size: OUTLINE_VERTS * 6 * 4,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    GIZMO_LINE_VERTS = GIZMO_AXES.length * 2;
+    GIZMO_TRI_VERTS = GIZMO_AXES.length * GIZMO_HEAD_SEGMENTS * 3;
+    gizmoLineVB = device.createBuffer({
+      size: GIZMO_LINE_VERTS * 6 * 4,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    gizmoTriVB = device.createBuffer({
+      size: GIZMO_TRI_VERTS * 6 * 4,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+  } else {
+    // WebGL placeholder setup if needed, for Fase 1 we just skip it
+    console.warn("Berjalan pada mode WebGL (Fase 1). Grid, Outline, dan Gizmo akan disembunyikan sampai implementasi Fase 2.");
+  }
 
   addCube();
   overlay.classList.add('hidden');
@@ -1304,7 +1343,6 @@ async function main() {
 
   let lastTime = performance.now();
   let fpsAcc = 0, fpsFrames = 0, fpsDisplay = 0;
-  const lineUniformArray = new Float32Array(16);
 
   function frame(now) {
     try {
@@ -1326,47 +1364,53 @@ async function main() {
       const view = mat4LookAt(eye, center, [0, 1, 0]);
       const viewProj = mat4Multiply(proj, view);
 
-      lineUniformArray.set(viewProj, 0);
-      device.queue.writeBuffer(lineUniformBuffer, 0, lineUniformArray);
+      if (isWebGPU) {
+        lineUniformArray.set(viewProj, 0);
+        device.queue.writeBuffer(lineUniformBuffer, 0, lineUniformArray);
 
-      const hasSelection = selectedEid >= 0 && !NodeMeta.isGroup[selectedEid];
-      if (hasSelection) {
-        device.queue.writeBuffer(outlineVB, 0, buildOutlineForEid(selectedEid));
-        const pivot = [Transform.px[selectedEid], Transform.py[selectedEid], Transform.pz[selectedEid]];
-        const gizmoGeo = buildGizmoGeometry(pivot);
-        device.queue.writeBuffer(gizmoLineVB, 0, gizmoGeo.lineData);
-        device.queue.writeBuffer(gizmoTriVB, 0, gizmoGeo.triData);
-      }
+        const hasSelection = selectedEid >= 0 && !NodeMeta.isGroup[selectedEid];
+        if (hasSelection) {
+          device.queue.writeBuffer(outlineVB, 0, buildOutlineForEid(selectedEid));
+          const pivot = [Transform.px[selectedEid], Transform.py[selectedEid], Transform.pz[selectedEid]];
+          const gizmoGeo = buildGizmoGeometry(pivot);
+          device.queue.writeBuffer(gizmoLineVB, 0, gizmoGeo.lineData);
+          device.queue.writeBuffer(gizmoTriVB, 0, gizmoGeo.triData);
+        }
 
-      const cameraState = {
-        eye,
-        yaw: camera.yaw,
-        pitch: camera.pitch,
-        onPostDraw: (pass) => {
-          pass.setPipeline(linePipeline);
-          pass.setBindGroup(0, lineBG);
-          pass.setVertexBuffer(0, gridVB);
-          pass.draw(gridVertexCount);
-
-          if (hasSelection) {
+        const cameraState = {
+          eye,
+          yaw: camera.yaw,
+          pitch: camera.pitch,
+          onPostDraw: (pass) => {
             pass.setPipeline(linePipeline);
             pass.setBindGroup(0, lineBG);
-            pass.setVertexBuffer(0, outlineVB);
-            pass.draw(OUTLINE_VERTS);
+            pass.setVertexBuffer(0, gridVB);
+            pass.draw(gridVertexCount);
 
-            pass.setPipeline(gizmoTriPipeline);
-            pass.setBindGroup(0, lineBG);
-            pass.setVertexBuffer(0, gizmoTriVB);
-            pass.draw(GIZMO_TRI_VERTS);
-            pass.setPipeline(gizmoLinePipeline);
-            pass.setBindGroup(0, lineBG);
-            pass.setVertexBuffer(0, gizmoLineVB);
-            pass.draw(GIZMO_LINE_VERTS);
+            if (hasSelection) {
+              pass.setPipeline(linePipeline);
+              pass.setBindGroup(0, lineBG);
+              pass.setVertexBuffer(0, outlineVB);
+              pass.draw(OUTLINE_VERTS);
+
+              pass.setPipeline(gizmoTriPipeline);
+              pass.setBindGroup(0, lineBG);
+              pass.setVertexBuffer(0, gizmoTriVB);
+              pass.draw(GIZMO_TRI_VERTS);
+              pass.setPipeline(gizmoLinePipeline);
+              pass.setBindGroup(0, lineBG);
+              pass.setVertexBuffer(0, gizmoLineVB);
+              pass.draw(GIZMO_LINE_VERTS);
+            }
           }
-        }
-      };
-
-      engineRef.rendererPlugin.draw(cameraState, sceneOrder, Renderable, RenderMesh);
+        };
+        engineRef.rendererPlugin.draw(cameraState, sceneOrder, Renderable, RenderMesh);
+      } else {
+        // WebGL render loop (No Grid/Outline for now)
+        const cameraState = { eye, yaw: camera.yaw, pitch: camera.pitch };
+        engineRef.rendererPlugin.draw(cameraState, sceneOrder, Renderable, RenderMesh);
+      }
+      
       requestAnimationFrame(frame);
     } catch (err) {
       fail('Error di render loop:\n' + (err.stack || err.message));

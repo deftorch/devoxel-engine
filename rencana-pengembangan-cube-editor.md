@@ -20,10 +20,10 @@ Sebelum menyentuh arsitektur apa pun.
 
 **Tujuan:** editor bisa boot dengan WebGPU maupun WebGL tanpa crash, sebelum fitur grid/outline/gizmo ikut dibenahi.
 
-- [ ] Modifikasi `main()` di `editor.js`: coba `new VoxelEngine({ ..., renderer: 'webgpu' })`, jika gagal (`catch`), retry dengan `renderer: 'webgl'`.
-- [ ] Tambahkan flag `const isWebGPU = engineRef.rendererPlugin.name === 'webgpu';` yang bisa dipakai bagian lain kode.
-- [ ] Update `setStatus(...)` agar pesan loading mencerminkan backend yang benar-benar terpakai (bukan selalu "Menginisialisasi GPU…" generik).
-- [ ] **Checkpoint:** di browser tanpa WebGPU (atau dengan `navigator.gpu` di-disable manual), editor harus tetap boot dan menampilkan chunk mesh (tanpa grid/outline/gizmo dulu — itu urusan fase berikutnya, biarkan sementara error/ke-skip dengan aman).
+- [x] Modifikasi `main()` di `editor.js`: coba `new VoxelEngine({ ..., renderer: 'webgpu' })`, jika gagal (`catch`), retry dengan `renderer: 'webgl'`.
+- [x] Tambahkan flag `const isWebGPU = engineRef.rendererPlugin.name === 'webgpu';` yang bisa dipakai bagian lain kode.
+- [x] Update `setStatus(...)` agar pesan loading mencerminkan backend yang benar-benar terpakai (bukan selalu "Menginisialisasi GPU…" generik).
+- [x] **Checkpoint:** di browser tanpa WebGPU (atau dengan `navigator.gpu` di-disable manual), editor harus tetap boot dan menampilkan chunk mesh (tanpa grid/outline/gizmo dulu — itu urusan fase berikutnya, biarkan sementara error/ke-skip dengan aman).
 
 ---
 
