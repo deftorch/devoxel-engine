@@ -1,6 +1,15 @@
 import { addEntity, removeEntity, addComponent, observe, onRemove } from "https://esm.sh/bitecs@0.4.0";
 import { world, growableComponent, addGrowable, Renderable, RenderMesh } from "../core/ecs/components.js";
 import { VoxelEngine } from "../core/index.js";
+import { Transform, ColorComp, NodeMeta, NameComp, EditorContext } from "./state.js";
+import History from "./history.js";
+import { buildCubeMesh, buildGridLines, interleaveLine, buildOutlineForEid, buildGizmoGeometry, gizmoArmLength, GIZMO_AXES } from "./geometry.js";
+import { uploadMesh, rebuildMesh, readTransform, writeTransform, hexToRgb01, rgb01ToHex, addCube, addGroup, deleteSelected, duplicateSelected, renameNode, commitTransform, selectNode } from "./scene-ops.js";
+import { vAdd, vSub, vScale, vCross, vDot, vNorm, rotationMat3, mat3Apply, mat4Perspective, mat4LookAt, mat4Multiply } from "../core/utils/math.js?v=2";
+
+EditorContext.refreshOutliner = () => refreshOutliner();
+EditorContext.refreshOutlinerSelection = () => refreshOutlinerSelection();
+EditorContext.refreshProperties = () => refreshProperties();
 
 // =============================================================================
 // Cube Editor Prototype — dibangun dengan mengadaptasi pola dari voxel-engine
@@ -61,106 +70,7 @@ window.addEventListener('unhandledrejection', (e) =>
   fail('Unhandled promise rejection:\n' + (e.reason?.stack || e.reason))
 );
 
-// -----------------------------------------------------------------------
-// 2. Math
-// -----------------------------------------------------------------------
-function vAdd(a, b) {
-  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
-}
-function vSub(a, b) {
-  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-}
-function vScale(a, s) {
-  return [a[0] * s, a[1] * s, a[2] * s];
-}
-function vCross(a, b) {
-  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-}
-function vDot(a, b) {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-function vNorm(a) {
-  const l = Math.hypot(a[0], a[1], a[2]) || 1;
-  return [a[0] / l, a[1] / l, a[2] / l];
-}
-
-function mat3RotX(a) {
-  const c = Math.cos(a),
-    s = Math.sin(a);
-  return [1, 0, 0, 0, c, -s, 0, s, c];
-}
-function mat3RotY(a) {
-  const c = Math.cos(a),
-    s = Math.sin(a);
-  return [c, 0, s, 0, 1, 0, -s, 0, c];
-}
-function mat3RotZ(a) {
-  const c = Math.cos(a),
-    s = Math.sin(a);
-  return [c, -s, 0, s, c, 0, 0, 0, 1];
-}
-function mat3Mul(a, b) {
-  const o = new Array(9);
-  for (let r = 0; r < 3; r++)
-    for (let c = 0; c < 3; c++)
-      o[r * 3 + c] = a[r * 3 + 0] * b[0 * 3 + c] + a[r * 3 + 1] * b[1 * 3 + c] + a[r * 3 + 2] * b[2 * 3 + c];
-  return o;
-}
-function mat3Transpose(m) {
-  return [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]];
-}
-function mat3Apply(m, v) {
-  return [
-    m[0] * v[0] + m[1] * v[1] + m[2] * v[2],
-    m[3] * v[0] + m[4] * v[1] + m[5] * v[2],
-    m[6] * v[0] + m[7] * v[1] + m[8] * v[2],
-  ];
-}
-// Rotasi euler XYZ derajat -> mat3. R = Rz * Ry * Rx (Rx diterapkan duluan ke vektor).
-function rotationMat3(rx, ry, rz) {
-  const d = Math.PI / 180;
-  return mat3Mul(mat3Mul(mat3RotZ(rz * d), mat3RotY(ry * d)), mat3RotX(rx * d));
-}
-
-function mat4Perspective(fovY, aspect, near, far) {
-  const f = 1 / Math.tan(fovY / 2);
-  const nf = 1 / (near - far);
-  return new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, far * nf, -1, 0, 0, near * far * nf, 0]);
-}
-function mat4LookAt(eye, center, up) {
-  const z = vNorm(vSub(eye, center));
-  const x = vNorm(vCross(up, z));
-  const y = vCross(z, x);
-  return new Float32Array([
-    x[0],
-    y[0],
-    z[0],
-    0,
-    x[1],
-    y[1],
-    z[1],
-    0,
-    x[2],
-    y[2],
-    z[2],
-    0,
-    -vDot(x, eye),
-    -vDot(y, eye),
-    -vDot(z, eye),
-    1,
-  ]);
-}
-function mat4Multiply(a, b) {
-  const out = new Float32Array(16);
-  for (let c = 0; c < 4; c++)
-    for (let r = 0; r < 4; r++)
-      out[c * 4 + r] =
-        a[0 * 4 + r] * b[c * 4 + 0] +
-        a[1 * 4 + r] * b[c * 4 + 1] +
-        a[2 * 4 + r] * b[c * 4 + 2] +
-        a[3 * 4 + r] * b[c * 4 + 3];
-  return out;
-}
+// Math functions dipindah ke core/utils/math.js
 
 // -----------------------------------------------------------------------
 // 3. ECS: world + component
@@ -169,70 +79,9 @@ function mat4Multiply(a, b) {
 
 // origin = sudut "from" kubus, size = lebar/tinggi/dalam, pivot = titik
 // rotasi (biasanya tengah kubus), rotation = euler derajat.
-const Transform = growableComponent(
-  {
-    ox: Float32Array,
-    oy: Float32Array,
-    oz: Float32Array,
-    sx: Float32Array,
-    sy: Float32Array,
-    sz: Float32Array,
-    px: Float32Array,
-    py: Float32Array,
-    pz: Float32Array,
-    rx: Float32Array,
-    ry: Float32Array,
-    rz: Float32Array,
-  },
-  32
-);
-const ColorComp = growableComponent({ r: Float32Array, g: Float32Array, b: Float32Array }, 32);
-// parent = -1 berarti root. isGroup: node organisasi tanpa geometri sendiri
-// (EXTENSION POINT: cocok jadi "bone" kalau nanti ditambah animasi).
-const NodeMeta = growableComponent({ parent: Int32Array, isGroup: Uint8Array }, 32);
-// NodeMeta, Transform, ColorComp tidak dihapus.
-// Renderable sekarang diimpor dari core.
-const NameComp = { value: [] };
-observe(world, onRemove(NameComp), (eid) => {
-  NameComp.value[eid] = null;
-});
+// ECS components, EditorContext.sceneOrder, dan EditorContext.selectedEid sudah dipindah ke state.js
 
-// Urutan tampil di outliner dikelola manual (array eid), tidak mengandalkan
-// urutan query bitECS — supaya urutan UI stabil walau id di-recycle.
-let sceneOrder = [];
-let selectedEid = -1;
-
-// -----------------------------------------------------------------------
-// 4. History (undo/redo, command pattern)
-// -----------------------------------------------------------------------
-const History = {
-  undoStack: [],
-  redoStack: [],
-  push(cmd) {
-    cmd.redo();
-    this.undoStack.push(cmd);
-    this.redoStack.length = 0;
-    onHistoryChange();
-  },
-  undo() {
-    const c = this.undoStack.pop();
-    if (!c) return;
-    c.undo();
-    this.redoStack.push(c);
-    onHistoryChange();
-  },
-  redo() {
-    const c = this.redoStack.pop();
-    if (!c) return;
-    c.redo();
-    this.undoStack.push(c);
-    onHistoryChange();
-  },
-};
-function onHistoryChange() {
-  $('btn-undo').disabled = History.undoStack.length === 0;
-  $('btn-redo').disabled = History.redoStack.length === 0;
-}
+// History dipindah ke history.js
 
 // -----------------------------------------------------------------------
 // 5. Cube mesh builder — bake rotasi-di-sekitar-pivot langsung ke
@@ -240,300 +89,14 @@ function onHistoryChange() {
 //    offset saat build), jadi shader tidak perlu uniform model-matrix
 //    per-objek. Simpel di GPU, gampang diaudit di CPU.
 // -----------------------------------------------------------------------
-function interleave(positions, normals, colors) {
-  const count = positions.length / 3;
-  const out = new Float32Array(count * 9);
-  for (let i = 0; i < count; i++) {
-    out[i * 9 + 0] = positions[i * 3 + 0];
-    out[i * 9 + 1] = positions[i * 3 + 1];
-    out[i * 9 + 2] = positions[i * 3 + 2];
-    out[i * 9 + 3] = normals[i * 3 + 0];
-    out[i * 9 + 4] = normals[i * 3 + 1];
-    out[i * 9 + 5] = normals[i * 3 + 2];
-    out[i * 9 + 6] = colors[i * 3 + 0];
-    out[i * 9 + 7] = colors[i * 3 + 1];
-    out[i * 9 + 8] = colors[i * 3 + 2];
-  }
-  return out;
-}
-// 6 sisi kubus, urutan corner CCW dilihat dari luar (cocok dengan
-// frontFace:'ccw' + cullMode:'back' di pipeline) — dihitung per-panggilan
-// di buildCubeMesh supaya rotasi pivot langsung ter-bake ke posisi corner.
-function buildCubeMesh(t) {
-  const { ox, oy, oz, sx, sy, sz, px, py, pz, rx, ry, rz, r, g, b } = t;
-  const R = rotationMat3(rx, ry, rz);
-  const corner = (lx, ly, lz) => {
-    const wx = ox + lx,
-      wy = oy + ly,
-      wz = oz + lz;
-    const rel = mat3Apply(R, [wx - px, wy - py, wz - pz]);
-    return [rel[0] + px, rel[1] + py, rel[2] + pz];
-  };
-  const c000 = corner(0, 0, 0),
-    c100 = corner(sx, 0, 0),
-    c010 = corner(0, sy, 0),
-    c001 = corner(0, 0, sz);
-  const c110 = corner(sx, sy, 0),
-    c101 = corner(sx, 0, sz),
-    c011 = corner(0, sy, sz),
-    c111 = corner(sx, sy, sz);
-
-  const faces = [
-    { n: [1, 0, 0], q: [c100, c110, c111, c101] },
-    { n: [-1, 0, 0], q: [c000, c001, c011, c010] },
-    { n: [0, 1, 0], q: [c010, c011, c111, c110] },
-    { n: [0, -1, 0], q: [c000, c100, c101, c001] },
-    { n: [0, 0, 1], q: [c001, c101, c111, c011] },
-    { n: [0, 0, -1], q: [c000, c010, c110, c100] },
-  ];
-  const nWorld = (n) => mat3Apply(R, n);
-  const positions = [],
-    normals = [],
-    colors = [],
-    indices = [];
-  let vi = 0;
-  for (const f of faces) {
-    const wn = nWorld(f.n);
-    for (const p of f.q) {
-      positions.push(p[0], p[1], p[2]);
-      normals.push(wn[0], wn[1], wn[2]);
-      colors.push(r, g, b);
-    }
-    indices.push(vi, vi + 1, vi + 2, vi, vi + 2, vi + 3);
-    vi += 4;
-  }
-  return {
-    vertexData: interleave(positions, normals, colors),
-    indexData: new Uint32Array(indices),
-    indexCount: indices.length,
-  };
-}
+// interleave dan buildCubeMesh dipindah ke geometry.js
 
 // -----------------------------------------------------------------------
 // 6. Scene ops — semua mutasi lewat sini supaya History konsisten.
 // -----------------------------------------------------------------------
-let engineRef = null;
+// EditorContext.engineRef dipindah ke EditorContext
 
-function uploadMesh(eid, mesh) {
-  RenderMesh.meshes[eid]?.destroy();
-  const created = engineRef.rendererPlugin.createMesh(mesh.vertexData, mesh.indexData);
-  RenderMesh.meshes[eid] = created;
-  Renderable.indexCount[eid] = mesh.indexCount;
-}
-function rebuildMesh(eid) {
-  if (NodeMeta.isGroup[eid]) return; // group tidak punya geometri
-  const t = readTransform(eid);
-  uploadMesh(eid, buildCubeMesh(t));
-}
-function readTransform(eid) {
-  return {
-    ox: Transform.ox[eid],
-    oy: Transform.oy[eid],
-    oz: Transform.oz[eid],
-    sx: Transform.sx[eid],
-    sy: Transform.sy[eid],
-    sz: Transform.sz[eid],
-    px: Transform.px[eid],
-    py: Transform.py[eid],
-    pz: Transform.pz[eid],
-    rx: Transform.rx[eid],
-    ry: Transform.ry[eid],
-    rz: Transform.rz[eid],
-    r: ColorComp.r[eid],
-    g: ColorComp.g[eid],
-    b: ColorComp.b[eid],
-  };
-}
-function writeTransform(eid, t) {
-  Transform.ox[eid] = t.ox;
-  Transform.oy[eid] = t.oy;
-  Transform.oz[eid] = t.oz;
-  Transform.sx[eid] = t.sx;
-  Transform.sy[eid] = t.sy;
-  Transform.sz[eid] = t.sz;
-  Transform.px[eid] = t.px;
-  Transform.py[eid] = t.py;
-  Transform.pz[eid] = t.pz;
-  Transform.rx[eid] = t.rx;
-  Transform.ry[eid] = t.ry;
-  Transform.rz[eid] = t.rz;
-  ColorComp.r[eid] = t.r;
-  ColorComp.g[eid] = t.g;
-  ColorComp.b[eid] = t.b;
-}
-
-const PALETTE = ['#7fd4ff', '#ffb27f', '#b6ff7f', '#ff7fd4', '#7fffcf', '#d4ff7f', '#ff9f7f', '#9f7fff'];
-let paletteIdx = 0;
-function hexToRgb01(hex) {
-  const v = parseInt(hex.slice(1), 16);
-  return [((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255];
-}
-function rgb01ToHex(r, g, b) {
-  const c = (x) =>
-    Math.round(Math.max(0, Math.min(1, x)) * 255)
-      .toString(16)
-      .padStart(2, '0');
-  return '#' + c(r) + c(g) + c(b);
-}
-
-let nextName = { cube: 1, group: 1 };
-
-function createNodeRaw(data) {
-  // data: {eid?, name, parent, isGroup, transform?, color?, orderIndex?}
-  const eid = addEntity(world);
-  addGrowable(world, eid, NodeMeta);
-  addComponent(world, eid, NameComp);
-  NodeMeta.parent[eid] = data.parent;
-  NodeMeta.isGroup[eid] = data.isGroup ? 1 : 0;
-  NameComp.value[eid] = data.name;
-  if (!data.isGroup) {
-    addGrowable(world, eid, Transform);
-    addGrowable(world, eid, ColorComp);
-    addGrowable(world, eid, Renderable);
-    addComponent(world, eid, RenderMesh);
-    writeTransform(eid, data.transform);
-    if (engineRef && engineRef.rendererPlugin && engineRef.rendererPlugin.ready) rebuildMesh(eid);
-  }
-  const idx = data.orderIndex != null ? data.orderIndex : sceneOrder.length;
-  sceneOrder.splice(idx, 0, eid);
-  data.eid = eid;
-  return eid;
-}
-function destroyNodeRaw(eid) {
-  const idx = sceneOrder.indexOf(eid);
-  if (idx >= 0) sceneOrder.splice(idx, 1);
-  removeEntity(world, eid); // otomatis trigger onRemove(GPUMesh) -> destroy buffer
-}
-
-function addCube() {
-  const parent = selectedEid >= 0 && NodeMeta.isGroup[selectedEid] ? selectedEid : -1;
-  const [r, g, b] = hexToRgb01(PALETTE[paletteIdx++ % PALETTE.length]);
-  const data = {
-    name: `Cube ${nextName.cube++}`,
-    parent,
-    isGroup: false,
-    transform: { ox: -4, oy: 0, oz: -4, sx: 8, sy: 8, sz: 8, px: 0, py: 4, pz: 0, rx: 0, ry: 0, rz: 0, r, g, b },
-  };
-  History.push({
-    label: 'Add Cube',
-    redo() {
-      createNodeRaw(data);
-      selectNode(data.eid);
-      refreshOutliner();
-    },
-    undo() {
-      destroyNodeRaw(data.eid);
-      selectNode(-1);
-      refreshOutliner();
-    },
-  });
-}
-function addGroup() {
-  const parent = selectedEid >= 0 && NodeMeta.isGroup[selectedEid] ? selectedEid : -1;
-  const data = { name: `Group ${nextName.group++}`, parent, isGroup: true };
-  History.push({
-    label: 'Add Group',
-    redo() {
-      createNodeRaw(data);
-      selectNode(data.eid);
-      refreshOutliner();
-    },
-    undo() {
-      destroyNodeRaw(data.eid);
-      selectNode(-1);
-      refreshOutliner();
-    },
-  });
-}
-function deleteSelected() {
-  if (selectedEid < 0) return;
-  const eid = selectedEid;
-  const data = {
-    name: NameComp.value[eid],
-    parent: NodeMeta.parent[eid],
-    isGroup: !!NodeMeta.isGroup[eid],
-    transform: NodeMeta.isGroup[eid] ? null : readTransform(eid),
-    orderIndex: sceneOrder.indexOf(eid),
-  };
-  History.push({
-    label: 'Delete Element',
-    redo() {
-      destroyNodeRaw(eid);
-      selectNode(-1);
-      refreshOutliner();
-    },
-    undo() {
-      createNodeRaw(data);
-      selectNode(data.eid);
-      refreshOutliner();
-    },
-  });
-}
-function duplicateSelected() {
-  if (selectedEid < 0 || NodeMeta.isGroup[selectedEid]) return; // EXTENSION POINT: duplikat group + children rekursif
-  const src = readTransform(selectedEid);
-  const t = { ...src, ox: src.ox + 1, oz: src.oz + 1, px: src.px + 1, pz: src.pz + 1 };
-  const data = {
-    name: NameComp.value[selectedEid] + ' copy',
-    parent: NodeMeta.parent[selectedEid],
-    isGroup: false,
-    transform: t,
-  };
-  History.push({
-    label: 'Duplicate',
-    redo() {
-      createNodeRaw(data);
-      selectNode(data.eid);
-      refreshOutliner();
-    },
-    undo() {
-      destroyNodeRaw(data.eid);
-      selectNode(-1);
-      refreshOutliner();
-    },
-  });
-}
-function renameNode(eid, newName) {
-  const oldName = NameComp.value[eid];
-  if (newName === oldName || !newName.trim()) {
-    refreshOutliner();
-    return;
-  }
-  History.push({
-    label: 'Rename',
-    redo() {
-      NameComp.value[eid] = newName;
-      refreshOutliner();
-    },
-    undo() {
-      NameComp.value[eid] = oldName;
-      refreshOutliner();
-    },
-  });
-}
-function commitTransform(eid, oldT, newT) {
-  History.push({
-    label: 'Edit Transform',
-    redo() {
-      writeTransform(eid, newT);
-      rebuildMesh(eid);
-      refreshProperties();
-    },
-    undo() {
-      writeTransform(eid, oldT);
-      rebuildMesh(eid);
-      refreshProperties();
-    },
-  });
-}
-function selectNode(eid) {
-  selectedEid = eid;
-  $('btn-delete').disabled = eid < 0;
-  $('btn-duplicate').disabled = eid < 0 || !!NodeMeta.isGroup[eid];
-  statSelected.textContent = eid < 0 ? '—' : NameComp.value[eid];
-  refreshOutlinerSelection();
-  refreshProperties();
-}
+// Scene ops dipindah ke scene-ops.js
 
 // -----------------------------------------------------------------------
 // 7. Outliner UI
@@ -549,12 +112,12 @@ function depthOf(eid) {
 }
 function refreshOutliner() {
   outlinerList.innerHTML = '';
-  if (sceneOrder.length === 0) {
+  if (EditorContext.sceneOrder.length === 0) {
     outlinerList.innerHTML = `<div id="outliner-empty">Kosong. Klik "＋ Cube" di toolbar untuk mulai.</div>`;
   } else {
-    for (const eid of sceneOrder) {
+    for (const eid of EditorContext.sceneOrder) {
       const row = document.createElement('div');
-      row.className = 'node-row' + (eid === selectedEid ? ' selected' : '');
+      row.className = 'node-row' + (eid === EditorContext.selectedEid ? ' selected' : '');
       row.style.paddingLeft = 10 + depthOf(eid) * 14 + 'px';
       row.dataset.eid = eid;
       const isGroup = !!NodeMeta.isGroup[eid];
@@ -587,11 +150,11 @@ function refreshOutliner() {
       outlinerList.appendChild(row);
     }
   }
-  statCount.textContent = sceneOrder.length;
+  statCount.textContent = EditorContext.sceneOrder.length;
 }
 function refreshOutlinerSelection() {
   outlinerList.querySelectorAll('.node-row').forEach((row) => {
-    row.classList.toggle('selected', Number(row.dataset.eid) === selectedEid);
+    row.classList.toggle('selected', Number(row.dataset.eid) === EditorContext.selectedEid);
   });
 }
 function escapeHtml(s) {
@@ -605,11 +168,11 @@ function numRow(labelChar, id) {
   return `<div class="prop-row"><span class="field-label">${labelChar}</span><input type="number" id="${id}" step="0.1"></div>`;
 }
 function refreshProperties() {
-  if (selectedEid < 0) {
+  if (EditorContext.selectedEid < 0) {
     propertiesBody.innerHTML = `<div id="properties-empty">Tidak ada elemen terpilih.<br>Tambahkan cube dari toolbar.</div>`;
     return;
   }
-  const eid = selectedEid;
+  const eid = EditorContext.selectedEid;
   const isGroup = !!NodeMeta.isGroup[eid];
   let html = `
     <div class="prop-group">
@@ -712,137 +275,22 @@ function refreshProperties() {
 // -----------------------------------------------------------------------
 // 10. Grid & selection outline (line-list, dibangun di CPU tiap kali perlu)
 // -----------------------------------------------------------------------
-function buildGridLines(size = 32, step = 2) {
-  const positions = [],
-    colors = [];
-  const half = size / 2;
-  const dim = [0.3, 0.34, 0.42];
-  const axisX = [0.85, 0.35, 0.35];
-  const axisZ = [0.35, 0.55, 0.9];
-  for (let i = -half; i <= half; i += step) {
-    const onAxis = Math.abs(i) < 1e-6;
-    const cx = onAxis ? axisZ : dim; // garis sejajar Z, ditandai warna Z-axis saat i=0
-    positions.push(i, 0, -half, i, 0, half);
-    colors.push(...cx, ...cx);
-    const cz = onAxis ? axisX : dim; // garis sejajar X
-    positions.push(-half, 0, i, half, 0, i);
-    colors.push(...cz, ...cz);
-  }
-  return { positions: new Float32Array(positions), colors: new Float32Array(colors) };
-}
-function interleaveLine(positions, colors) {
-  const count = positions.length / 3;
-  const out = new Float32Array(count * 6);
-  for (let i = 0; i < count; i++) {
-    out[i * 6 + 0] = positions[i * 3 + 0];
-    out[i * 6 + 1] = positions[i * 3 + 1];
-    out[i * 6 + 2] = positions[i * 3 + 2];
-    out[i * 6 + 3] = colors[i * 3 + 0];
-    out[i * 6 + 4] = colors[i * 3 + 1];
-    out[i * 6 + 5] = colors[i * 3 + 2];
-  }
-  return out;
-}
-function buildOutlineForEid(eid) {
-  const t = readTransform(eid);
-  const R = rotationMat3(t.rx, t.ry, t.rz);
-  const corner = (lx, ly, lz) => {
-    const wx = t.ox + lx,
-      wy = t.oy + ly,
-      wz = t.oz + lz;
-    const rel = mat3Apply(R, [wx - t.px, wy - t.py, wz - t.pz]);
-    return [rel[0] + t.px, rel[1] + t.py, rel[2] + t.pz];
-  };
-  const c = {
-    '000': corner(0, 0, 0),
-    100: corner(t.sx, 0, 0),
-    '010': corner(0, t.sy, 0),
-    '001': corner(0, 0, t.sz),
-    110: corner(t.sx, t.sy, 0),
-    101: corner(t.sx, 0, t.sz),
-    '011': corner(0, t.sy, t.sz),
-    111: corner(t.sx, t.sy, t.sz),
-  };
-  const edges = [
-    ['000', '100'],
-    ['100', '110'],
-    ['110', '010'],
-    ['010', '000'],
-    ['001', '101'],
-    ['101', '111'],
-    ['111', '011'],
-    ['011', '001'],
-    ['000', '001'],
-    ['100', '101'],
-    ['110', '111'],
-    ['010', '011'],
-  ];
-  const positions = [],
-    colors = [];
-  const col = [1.0, 0.82, 0.25];
-  for (const [a, b] of edges) {
-    positions.push(...c[a], ...c[b]);
-    colors.push(...col, ...col);
-  }
-  return interleaveLine(new Float32Array(positions), new Float32Array(colors));
-}
-
-const GIZMO_HEAD_SEGMENTS = 6;
-// Geometri gizmo translate: 3 shaft (line-list) + 3 kepala panah kerucut
-// (triangle-list, di-fan dari titik tip). Ukurannya dihitung ulang tiap
-// frame dari gizmoArmLength() supaya skala layar tetap konsisten walau zoom.
-function buildGizmoGeometry(pivot) {
-  const armLen = gizmoArmLength();
-  const shaftEndFrac = 0.8,
-    tipFrac = 1.05,
-    headRadius = armLen * 0.07;
-  const linePos = [],
-    lineCol = [];
-  const triPos = [],
-    triCol = [];
-  for (const ax of GIZMO_AXES) {
-    const shaftEnd = vAdd(pivot, vScale(ax.dir, armLen * shaftEndFrac));
-    linePos.push(...pivot, ...shaftEnd);
-    lineCol.push(...ax.color, ...ax.color);
-
-    const tip = vAdd(pivot, vScale(ax.dir, armLen * tipFrac));
-    const ref = Math.abs(ax.dir[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
-    const p1 = vNorm(vCross(ax.dir, ref));
-    const p2 = vCross(ax.dir, p1);
-    const basePts = [];
-    for (let i = 0; i < GIZMO_HEAD_SEGMENTS; i++) {
-      const angle = (i / GIZMO_HEAD_SEGMENTS) * Math.PI * 2;
-      basePts.push(
-        vAdd(shaftEnd, vAdd(vScale(p1, Math.cos(angle) * headRadius), vScale(p2, Math.sin(angle) * headRadius)))
-      );
-    }
-    for (let i = 0; i < GIZMO_HEAD_SEGMENTS; i++) {
-      const a = basePts[i],
-        b = basePts[(i + 1) % GIZMO_HEAD_SEGMENTS];
-      triPos.push(...tip, ...a, ...b);
-      triCol.push(...ax.color, ...ax.color, ...ax.color);
-    }
-  }
-  return {
-    lineData: interleaveLine(new Float32Array(linePos), new Float32Array(lineCol)),
-    triData: interleaveLine(new Float32Array(triPos), new Float32Array(triCol)),
-  };
-}
+// buildGridLines, interleaveLine, buildOutlineForEid dipindah ke geometry.js
 
 // -----------------------------------------------------------------------
 // 11. Kamera orbit + input + Gizmo translate
 // -----------------------------------------------------------------------
-const camera = { target: [0, 3, 0], yaw: 0.9, pitch: -0.5, distance: 26 };
+// EditorContext.camera state dipindah ke EditorContext
 function cameraBasis() {
-  const cp = Math.cos(camera.pitch),
-    sp = Math.sin(camera.pitch);
-  const cy = Math.cos(camera.yaw),
-    sy = Math.sin(camera.yaw);
+  const cp = Math.cos(EditorContext.camera.pitch),
+    sp = Math.sin(EditorContext.camera.pitch);
+  const cy = Math.cos(EditorContext.camera.yaw),
+    sy = Math.sin(EditorContext.camera.yaw);
   const forward = vNorm([sy * cp, sp, cy * cp]); // dari eye ke target
   const worldUp = [0, 1, 0];
   const right = vNorm(vCross(forward, worldUp));
   const up = vCross(right, forward);
-  const eye = vSub(camera.target, vScale(forward, camera.distance));
+  const eye = vSub(EditorContext.camera.target, vScale(forward, EditorContext.camera.distance));
   return { eye, forward, right, up };
 }
 const FOV_Y = Math.PI / 3;
@@ -862,14 +310,7 @@ function screenToRay(clientX, clientY) {
 // --- Gizmo translate: 3 arrow handle (X merah, Y hijau, Z biru) di pivot
 // elemen terpilih. EXTENSION POINT: tambah mode rotate/scale dengan pola
 // yang sama (ganti geometri handle + interaksinya, drag-math-nya mirip).
-const GIZMO_AXES = [
-  { key: 'x', dir: [1, 0, 0], color: [0.95, 0.35, 0.35] },
-  { key: 'y', dir: [0, 1, 0], color: [0.4, 0.9, 0.4] },
-  { key: 'z', dir: [0, 0, 1], color: [0.4, 0.6, 0.95] },
-];
-function gizmoArmLength() {
-  return Math.max(1.5, Math.min(45, camera.distance * 0.18));
-}
+// GIZMO_AXES dan gizmoArmLength dipindah ke geometry.js
 // Titik terdekat dua garis 3D (formula closest-point-between-two-lines):
 // line1 = p0 + s*d1 (d1 harus unit), line2 = ro + t*d2 (d2 harus unit).
 // Return null kalau sejajar (denom ~0).
@@ -885,9 +326,9 @@ function closestParamsBetweenLines(p0, d1, ro, d2) {
   return { s, t };
 }
 function pickGizmoAxis(clientX, clientY) {
-  if (selectedEid < 0 || NodeMeta.isGroup[selectedEid]) return null;
+  if (EditorContext.selectedEid < 0 || NodeMeta.isGroup[EditorContext.selectedEid]) return null;
   const { ro, rd } = screenToRay(clientX, clientY);
-  const pivot = [Transform.px[selectedEid], Transform.py[selectedEid], Transform.pz[selectedEid]];
+  const pivot = [Transform.px[EditorContext.selectedEid], Transform.py[EditorContext.selectedEid], Transform.pz[EditorContext.selectedEid]];
   const armLen = gizmoArmLength();
   const threshold = armLen * 0.16;
   let best = null;
@@ -913,7 +354,7 @@ canvas.addEventListener('mousedown', (e) => {
   const hit = e.button === 0 ? pickGizmoAxis(e.clientX, e.clientY) : null;
   if (hit) {
     inputMode = 'gizmo';
-    gizmoDrag = { axis: hit.axis, dir: hit.dir, startS: hit.s, startT: readTransform(selectedEid) };
+    gizmoDrag = { axis: hit.axis, dir: hit.dir, startS: hit.s, startT: readTransform(EditorContext.selectedEid) };
   } else {
     inputMode = e.button === 2 ? 'pan' : 'orbit';
   }
@@ -922,12 +363,12 @@ canvas.addEventListener('mousedown', (e) => {
 window.addEventListener('mouseup', (e) => {
   const moved = Math.hypot(e.clientX - mouseDownPos[0], e.clientY - mouseDownPos[1]);
   if (inputMode === 'gizmo' && gizmoDrag) {
-    const newT = readTransform(selectedEid);
+    const newT = readTransform(EditorContext.selectedEid);
     if (moved > 1)
-      commitTransform(selectedEid, gizmoDrag.startT, newT); // cuma commit ke History kalau memang bergeser
+      commitTransform(EditorContext.selectedEid, gizmoDrag.startT, newT); // cuma commit ke History kalau memang bergeser
     else {
-      writeTransform(selectedEid, gizmoDrag.startT);
-      rebuildMesh(selectedEid);
+      writeTransform(EditorContext.selectedEid, gizmoDrag.startT);
+      rebuildMesh(EditorContext.selectedEid);
       refreshProperties();
     } // klik doang, batalkan
     gizmoDrag = null;
@@ -952,9 +393,9 @@ window.addEventListener('mousemove', (e) => {
       t.px += gizmoDrag.dir[0] * delta;
       t.py += gizmoDrag.dir[1] * delta;
       t.pz += gizmoDrag.dir[2] * delta;
-      writeTransform(selectedEid, t);
-      rebuildMesh(selectedEid);
-      syncPropertyInputs(selectedEid); // update angka di panel tanpa rebuild DOM (biar tidak lompat fokus)
+      writeTransform(EditorContext.selectedEid, t);
+      rebuildMesh(EditorContext.selectedEid);
+      syncPropertyInputs(EditorContext.selectedEid); // update angka di panel tanpa rebuild DOM (biar tidak lompat fokus)
     }
     lastMouse = [e.clientX, e.clientY];
     return;
@@ -964,19 +405,19 @@ window.addEventListener('mousemove', (e) => {
     dy = e.clientY - lastMouse[1];
   lastMouse = [e.clientX, e.clientY];
   if (inputMode === 'orbit') {
-    camera.yaw -= dx * 0.006;
-    camera.pitch = Math.max(-1.5, Math.min(1.5, camera.pitch - dy * 0.006));
+    EditorContext.camera.yaw -= dx * 0.006;
+    EditorContext.camera.pitch = Math.max(-1.5, Math.min(1.5, EditorContext.camera.pitch - dy * 0.006));
   } else if (inputMode === 'pan') {
     const { right, up } = cameraBasis();
-    const s = camera.distance * 0.0016;
-    camera.target = vAdd(camera.target, vAdd(vScale(right, -dx * s), vScale(up, dy * s)));
+    const s = EditorContext.camera.distance * 0.0016;
+    EditorContext.camera.target = vAdd(EditorContext.camera.target, vAdd(vScale(right, -dx * s), vScale(up, dy * s)));
   }
 });
 canvas.addEventListener(
   'wheel',
   (e) => {
     e.preventDefault();
-    camera.distance = Math.max(3, Math.min(120, camera.distance * (1 + e.deltaY * 0.001)));
+    EditorContext.camera.distance = Math.max(3, Math.min(120, EditorContext.camera.distance * (1 + e.deltaY * 0.001)));
   },
   { passive: false }
 );
@@ -1013,7 +454,7 @@ function pickAtScreen(clientX, clientY) {
   const { ro, rd } = screenToRay(clientX, clientY);
   let bestT = Infinity,
     bestEid = -1;
-  for (const eid of sceneOrder) {
+  for (const eid of EditorContext.sceneOrder) {
     if (NodeMeta.isGroup[eid]) continue;
     const t = readTransform(eid);
     const R = rotationMat3(t.rx, t.ry, t.rz);
@@ -1055,7 +496,7 @@ function rayAABB(ro, rd, mn, mx) {
 // 14. Export / Import JSON
 // -----------------------------------------------------------------------
 function exportScene() {
-  const elements = sceneOrder.map((eid) => {
+  const elements = EditorContext.sceneOrder.map((eid) => {
     const base = { id: eid, name: NameComp.value[eid], parent: NodeMeta.parent[eid], isGroup: !!NodeMeta.isGroup[eid] };
     if (!base.isGroup) {
       const t = readTransform(eid);
@@ -1078,8 +519,8 @@ function exportScene() {
 function importScene(json) {
   const data = JSON.parse(json);
   // Bersihkan scene saat ini (import = ganti dokumen, reset history seperti "buka file baru").
-  for (const eid of [...sceneOrder]) destroyNodeRaw(eid);
-  sceneOrder = [];
+  for (const eid of [...EditorContext.sceneOrder]) destroyNodeRaw(eid);
+  EditorContext.sceneOrder = [];
   History.undoStack.length = 0;
   History.redoStack.length = 0;
   onHistoryChange();
@@ -1129,7 +570,7 @@ $('btn-import').addEventListener('click', () => $('file-import').click());
 $('file-import').addEventListener('change', (e) => {
   const file = e.target.files[0];
   if (!file) return;
-  if (sceneOrder.length && !confirm('Import akan mengganti scene yang sedang dikerjakan. Lanjutkan?')) {
+  if (EditorContext.sceneOrder.length && !confirm('Import akan mengganti scene yang sedang dikerjakan. Lanjutkan?')) {
     e.target.value = '';
     return;
   }
@@ -1148,7 +589,7 @@ window.addEventListener('keydown', (e) => {
   const tag = document.activeElement.tagName;
   const typing = tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement.isContentEditable;
   if (typing) return;
-  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedEid >= 0) {
+  if ((e.key === 'Delete' || e.key === 'Backspace') && EditorContext.selectedEid >= 0) {
     e.preventDefault();
     deleteSelected();
   }
@@ -1175,15 +616,15 @@ async function main() {
 
   try {
     setStatus(`Menginisialisasi ${targetRenderer.toUpperCase()}...`, 0);
-    engineRef = new VoxelEngine({ chunkSize: [32, 32, 32], storage: 'flatgrid', mesher: 'greedy', renderer: targetRenderer });
-    await engineRef.start(canvas);
+    EditorContext.engineRef = new VoxelEngine({ chunkSize: [32, 32, 32], storage: 'flatgrid', mesher: 'greedy', renderer: targetRenderer });
+    await EditorContext.engineRef.start(canvas);
   } catch (err) { 
     if (targetRenderer === 'webgpu') {
       console.warn('WebGPU gagal diinisialisasi, mencoba fallback ke WebGL...', err);
       try {
         setStatus('Menginisialisasi WebGL (Fallback)...', 0);
-        engineRef = new VoxelEngine({ chunkSize: [32, 32, 32], storage: 'flatgrid', mesher: 'greedy', renderer: 'webgl' });
-        await engineRef.start(canvas);
+        EditorContext.engineRef = new VoxelEngine({ chunkSize: [32, 32, 32], storage: 'flatgrid', mesher: 'greedy', renderer: 'webgl' });
+        await EditorContext.engineRef.start(canvas);
       } catch (fallbackErr) {
         fail(fallbackErr.message);
         return;
@@ -1231,8 +672,8 @@ async function main() {
       
       const cameraState = {
         eye,
-        yaw: camera.yaw,
-        pitch: camera.pitch,
+        yaw: EditorContext.camera.yaw,
+        pitch: EditorContext.camera.pitch,
       };
 
       // Siapkan data debug primitif
@@ -1242,24 +683,24 @@ async function main() {
       debugData.lines.push({ data: gridVertexData, depthTest: true });
 
       // 2. Gizmo & Outline (jika ada seleksi)
-      const hasSelection = selectedEid >= 0 && !NodeMeta.isGroup[selectedEid];
+      const hasSelection = EditorContext.selectedEid >= 0 && !NodeMeta.isGroup[EditorContext.selectedEid];
       if (hasSelection) {
-        const outlineData = buildOutlineForEid(selectedEid);
+        const outlineData = buildOutlineForEid(EditorContext.selectedEid);
         debugData.lines.push({ data: outlineData, depthTest: true });
 
-        const pivot = [Transform.px[selectedEid], Transform.py[selectedEid], Transform.pz[selectedEid]];
+        const pivot = [Transform.px[EditorContext.selectedEid], Transform.py[EditorContext.selectedEid], Transform.pz[EditorContext.selectedEid]];
         const gizmoGeo = buildGizmoGeometry(pivot);
         debugData.lines.push({ data: gizmoGeo.lineData, depthTest: false }); // X-ray
         debugData.tris.push({ data: gizmoGeo.triData, depthTest: false });
       }
 
       // Kirim ke renderer
-      if (typeof engineRef.rendererPlugin.drawDebugPrimitives === 'function') {
-        engineRef.rendererPlugin.drawDebugPrimitives(cameraState, debugData);
+      if (typeof EditorContext.engineRef.rendererPlugin.drawDebugPrimitives === 'function') {
+        EditorContext.engineRef.rendererPlugin.drawDebugPrimitives(cameraState, debugData);
       }
       
       // Draw frame
-      engineRef.rendererPlugin.draw(cameraState, sceneOrder, Renderable, RenderMesh);
+      EditorContext.engineRef.rendererPlugin.draw(cameraState, EditorContext.sceneOrder, Renderable, RenderMesh);
       
       requestAnimationFrame(frame);
     } catch (err) {

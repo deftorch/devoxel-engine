@@ -127,3 +127,40 @@ export function vAdd(a, b) {
 export function vScale(a, s) {
   return [a[0] * s, a[1] * s, a[2] * s];
 }
+
+export function mat3RotX(a) {
+  const c = Math.cos(a),
+    s = Math.sin(a);
+  return [1, 0, 0, 0, c, -s, 0, s, c];
+}
+export function mat3RotY(a) {
+  const c = Math.cos(a),
+    s = Math.sin(a);
+  return [c, 0, s, 0, 1, 0, -s, 0, c];
+}
+export function mat3RotZ(a) {
+  const c = Math.cos(a),
+    s = Math.sin(a);
+  return [c, -s, 0, s, c, 0, 0, 0, 1];
+}
+export function mat3Mul(a, b) {
+  const o = new Array(9);
+  for (let r = 0; r < 3; r++)
+    for (let c = 0; c < 3; c++)
+      o[r * 3 + c] = a[r * 3 + 0] * b[0 * 3 + c] + a[r * 3 + 1] * b[1 * 3 + c] + a[r * 3 + 2] * b[2 * 3 + c];
+  return o;
+}
+export function mat3Transpose(m) {
+  return [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]];
+}
+export function mat3Apply(m, v) {
+  return [
+    m[0] * v[0] + m[1] * v[1] + m[2] * v[2],
+    m[3] * v[0] + m[4] * v[1] + m[5] * v[2],
+    m[6] * v[0] + m[7] * v[1] + m[8] * v[2],
+  ];
+}
+export function rotationMat3(rx, ry, rz) {
+  const d = Math.PI / 180;
+  return mat3Mul(mat3Mul(mat3RotZ(rz * d), mat3RotY(ry * d)), mat3RotX(rx * d));
+}
