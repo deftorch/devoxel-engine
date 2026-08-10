@@ -44,6 +44,18 @@ export class VoxelRenderer {
     throw new Error(`[VoxelRenderer] render() not implemented in ${this.name}!`);
   }
 
+  /**
+   * Queue debug primitives (lines and triangles) for the next draw call.
+   * This provides a standard interface for drawing grids, outlines, and gizmos
+   * without tying the app code to WebGPU/WebGL specific buffers.
+   * @param {Object} cameraState - Same camera state passed to draw()
+   * @param {Object} debugData - { lines: [...], tris: [...] }
+   */
+  drawDebugPrimitives(cameraState, debugData) {
+    // Optional to implement, default no-op if the backend doesn't support debug rendering
+    console.warn(`[VoxelRenderer] drawDebugPrimitives() not implemented in ${this.name}!`);
+  }
+
   /** Release GPU resources. */
   destroy() {
     // Override in subclass if cleanup is needed.

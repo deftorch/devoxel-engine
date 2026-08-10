@@ -62,6 +62,12 @@ export class VoxelRendererAdapter extends VoxelRenderer {
     // No-op: caller is expected to invoke `.draw(...)` themselves each frame.
   }
 
+  drawDebugPrimitives(cameraState, debugData) {
+    if (this.raw && typeof this.raw.drawDebugPrimitives === 'function') {
+      return this.raw.drawDebugPrimitives(cameraState, debugData);
+    }
+  }
+
   destroy() {
     if (this.raw && typeof this.raw.destroy === 'function') {
       this.raw.destroy();

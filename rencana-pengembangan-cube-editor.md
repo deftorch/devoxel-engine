@@ -31,17 +31,17 @@ Sebelum menyentuh arsitektur apa pun.
 
 **Tujuan:** ini yang menyelesaikan akar masalah, bukan cuma menambal WebGL. Grid, outline, dan gizmo naik status dari "kode ad-hoc di editor" menjadi bagian resmi dari kontrak `VoxelRenderer`.
 
-- [ ] Tambahkan method baru di `VoxelRenderer` (base class): `drawDebugPrimitives(cameraState, { lines, tris })` — kontrak seragam untuk kedua backend.
-- [ ] **`webgpu/engine.js`**: refactor `LINE_SHADER`, pipeline garis, pipeline gizmo (line + tri) yang saat ini hidup di `editor.js` → pindahkan ke sini, dibungkus di belakang `drawDebugPrimitives()`. Tetap pakai `onPostDraw(pass)` di dalam pass yang sama seperti sekarang.
-- [ ] **`webgl/engine.js`**:
+- [x] Tambahkan method baru di `VoxelRenderer` (base class): `drawDebugPrimitives(cameraState, { lines, tris })` — kontrak seragam untuk kedua backend.
+- [x] **`webgpu/engine.js`**: refactor `LINE_SHADER`, pipeline garis, pipeline gizmo (line + tri) yang saat ini hidup di `editor.js` → pindahkan ke sini, dibungkus di belakang `drawDebugPrimitives()`. Tetap pakai `onPostDraw(pass)` di dalam pass yang sama seperti sekarang.
+- [x] **`webgl/engine.js`**:
   - Tulis vertex/fragment shader GLSL versi garis (port langsung dari `LINE_SHADER` WGSL — logikanya sederhana, tinggal `position * uViewProj` + passthrough warna).
   - Buat VAO/VBO khusus untuk data garis dan data triangle gizmo (terpisah dari VAO mesh voxel utama).
   - Implementasikan `gl.LINES` untuk grid+outline+gizmo-line, dan `gl.TRIANGLES` untuk gizmo arrow-head.
   - **Kelola state eksplisit** (poin kritis karena WebGL adalah state machine, bukan per-pass seperti WebGPU):
     - Grid & outline: depth test aktif, `depthFunc(LESS)` (default, tidak perlu diubah).
     - Gizmo: `gl.disable(DEPTH_TEST)` (atau `depthFunc(ALWAYS)`) + `gl.disable(CULL_FACE)` saat digambar, lalu **wajib** `gl.enable(DEPTH_TEST)` + `gl.enable(CULL_FACE)` sebelum frame berikutnya, supaya tidak bocor ke render chunk voxel.
-- [ ] Expose `gl` (dan `canvas` bila perlu) di return object `initWebGL()` — otomatis ter-expose lewat `VoxelRendererAdapter` tanpa perubahan tambahan di adapter.
-- [ ] **Checkpoint:** grid, outline seleksi, dan gizmo translate tampil identik secara visual di WebGPU (regresi = 0) dan mulai berfungsi di WebGL.
+- [x] Expose `gl` (dan `canvas` bila perlu) di return object `initWebGL()` — otomatis ter-expose lewat `VoxelRendererAdapter` tanpa perubahan tambahan di adapter.
+- [x] **Checkpoint:** grid, outline seleksi, dan gizmo translate tampil identik secara visual di WebGPU (regresi = 0) dan mulai berfungsi di WebGL.
 
 ---
 
