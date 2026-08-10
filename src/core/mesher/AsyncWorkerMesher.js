@@ -19,29 +19,43 @@ export class AsyncWorkerMesher extends VoxelMesher {
     for (let i = 0; i < poolSize; i++) {
       const w = new Worker(new URL('../../game/workers/mesher.worker.js', import.meta.url), { type: 'module' });
       w.onmessage = (e) => this.onWorkerMessage(e, w);
-      w.onerror = (e) => console.error('[AsyncWorkerMesher] Worker error:', e);
+      w.onerror = (e) => {
+        console.error('[AsyncWorkerMesher] Worker error:', e.message, e.filename, e.lineno);
+        if (this.callbacks.size > 0) {
+          const firstJobId = this.callbacks.keys().next().value;
+          const resolve = this.callbacks.get(firstJobId);
+          if (resolve) {
+            // Kita resolve dengan pesan error agar engine tidak hang
+            resolve({ error: e.message || 'Worker crash' });
+            this.callbacks.delete(firstJobId);
+          }
+        }
+      };
       this.workers.push(w);
       this.freeWorkers.push(w);
     }
   }
 
   onWorkerMessage(e, worker) {
-    const { cx, cz, vertexData, indexData, indexCount, rtData, stats, jobId } = e.data;
+    const { cx, cz, vertexData, indexData, indexCount, rtData, stats, jobId, error } = e.data;
     this.freeWorkers.push(worker);
 
     const resolve = this.callbacks.get(jobId);
     if (resolve) {
       this.callbacks.delete(jobId);
-      // PENTING: Karena worker digunakan oleh mode WebGPU dan Raytrace,
-      // kita harus mereturn format mesh yang sesuai. 
-      // VoxelEngine tidak peduli isinya apa, ia hanya menyimpannya di chunk.mesh
-      let meshData;
-      if (rtData) {
-        meshData = { rtData, stats };
+      
+      if (error) {
+        console.error('[AsyncWorkerMesher] Worker return error:', error);
+        resolve({ error });
       } else {
-        meshData = { vertexData, indexData, indexCount, stats };
+        let meshData;
+        if (rtData) {
+          meshData = { rtData, stats };
+        } else {
+          meshData = { vertexData, indexData, indexCount, stats };
+        }
+        resolve(meshData);
       }
-      resolve(meshData);
     }
 
     this.processQueue();

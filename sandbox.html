@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Voxel Engine — WebGPU + bitECS Modular</title>
+    <link rel="stylesheet" href="css/style.css" />
+  </head>
+  <body>
+    <canvas id="gpu-canvas"></canvas>
+    <div id="crosshair" class="hidden"></div>
+    <div id="hud" class="hidden"></div>
+    <div
+      id="controls"
+      style="
+        position: fixed;
+        top: 14px;
+        right: 14px;
+        background: rgba(10, 14, 20, 0.8);
+        backdrop-filter: blur(6px);
+        padding: 10px 14px;
+        border-radius: 8px;
+        border: 1px solid rgba(120, 170, 255, 0.2);
+        z-index: 100;
+        color: #cfe8ff;
+        font-size: 13px;
+        width: 220px;
+      "
+    >
+      <a href="index.html" style="display:inline-block; margin-bottom:12px; color:#00F0FF; text-decoration:none; font-size:12px; font-weight:bold;">&larr; Back to Menu</a><br/>
+      <b style="color: #7fd4ff">Benchmark Config</b><br />
+
+      <div style="margin-top: 8px">1. Struktur Data:</div>
+      <select
+        id="storage-select"
+        style="
+          margin-top: 4px;
+          background: #141b26;
+          color: #cfe8ff;
+          border: 1px solid rgba(120, 170, 255, 0.4);
+          padding: 6px;
+          width: 100%;
+          border-radius: 4px;
+        "
+      >
+        <option value="flat">Flat Grid (O(1) Cepat)</option>
+        <option value="octree">SVO Octree (Kompresi)</option>
+        <option value="brickmap">BrickMap (Hibrida Terbaik)</option>
+        <option value="svdag">SVDAG (Eksperimen)</option>
+        <option value="tree64">64-Tree / contree (SVO x Grid)</option>
+        <option value="sdf">Voxel SDF (Sphere Tracing)</option>
+      </select>
+
+      <div style="margin-top: 8px">2. Tipe Medan (Kondisi):</div>
+      <select
+        id="terrain-select"
+        style="
+          margin-top: 4px;
+          background: #141b26;
+          color: #cfe8ff;
+          border: 1px solid rgba(120, 170, 255, 0.4);
+          padding: 6px;
+          width: 100%;
+          border-radius: 4px;
+        "
+      >
+        <option value="normal">Normal (Perlin Noise)</option>
+        <option value="homogeneous">Homogen (Best untuk Octree)</option>
+        <option value="checkerboard">Catur (Worst untuk Octree)</option>
+        <option value="gi-box">[GI] Box + Lubang Langit-langit</option>
+        <option value="gi-lshape">[GI] Lorong L (uji bounce)</option>
+        <option value="gi-colorwall">[GI] Dinding Merah/Salju (color bleeding)</option>
+      </select>
+
+      <div style="margin-top: 8px">3. Mesin Render (Pipeline):</div>
+      <select
+        id="render-select"
+        style="
+          margin-top: 4px;
+          background: #2a1426;
+          color: #ffcfef;
+          border: 1px solid rgba(255, 120, 200, 0.4);
+          padding: 6px;
+          width: 100%;
+          border-radius: 4px;
+        "
+      >
+        <option value="raster">Rasterisasi (Poligon) - Mode Saat Ini</option>
+        <option value="raytrace">VoxelRT (Compute Raycast) - Eksperimental</option>
+      </select>
+
+      <div style="margin-top: 8px">4. Debug View (khusus VoxelRT):</div>
+      <select
+        id="debug-select"
+        style="
+          margin-top: 4px;
+          background: #141b26;
+          color: #cfe8ff;
+          border: 1px solid rgba(120, 170, 255, 0.4);
+          padding: 6px;
+          width: 100%;
+          border-radius: 4px;
+        "
+      >
+        <option value="0">Normal</option>
+        <option value="1">Radiance Only</option>
+        <option value="2">Normal as Color</option>
+        <option value="3">AO Only</option>
+      </select>
+
+      <div style="margin-top: 8px">5. Arah Matahari (khusus VoxelRT):</div>
+      <label style="font-size: 12px; opacity: 0.8; display: block; margin-top: 4px">
+        Elevasi: <span id="sun-elevation-val">55</span>°
+      </label>
+      <input
+        type="range"
+        id="sun-elevation"
+        min="0"
+        max="90"
+        value="55"
+        step="1"
+        style="width: 100%"
+        oninput="document.getElementById('sun-elevation-val').textContent = this.value"
+      />
+      <label style="font-size: 12px; opacity: 0.8; display: block; margin-top: 4px">
+        Azimuth: <span id="sun-azimuth-val">45</span>°
+      </label>
+      <input
+        type="range"
+        id="sun-azimuth"
+        min="0"
+        max="360"
+        value="45"
+        step="1"
+        style="width: 100%"
+        oninput="document.getElementById('sun-azimuth-val').textContent = this.value"
+      />
+
+      <button
+        id="rebuild-btn"
+        style="
+          margin-top: 12px;
+          width: 100%;
+          background: #1c2635;
+          color: #cfe8ff;
+          border: 1px solid #7fd4ff;
+          border-radius: 4px;
+          padding: 6px;
+          cursor: pointer;
+        "
+      >
+        Mulai Benchmark
+      </button>
+      <button
+        id="rt-diag-btn"
+        style="
+          margin-top: 8px;
+          width: 100%;
+          background: #113344;
+          color: #cfe8ff;
+          border: 1px solid #7fd4ff;
+          border-radius: 4px;
+          padding: 6px;
+          cursor: pointer;
+        "
+      >
+        RT Diagnostics (salin)
+      </button>
+    </div>
+
+    <div id="overlay">
+      <div id="status">Menginisialisasi WebGPU…</div>
+      <div class="bar"><div class="fill" id="fill"></div></div>
+      <small id="hint">Worker Pool paralel + terrain smoothing, MSAA 4x, fog, dan hemispherical ambient.</small>
+    </div>
+
+    <script type="module" src="src/game/main.js"></script>
+  </body>
+</html>
