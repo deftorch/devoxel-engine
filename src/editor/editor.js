@@ -313,8 +313,6 @@ function buildCubeMesh(t) {
 // 6. Scene ops — semua mutasi lewat sini supaya History konsisten.
 // -----------------------------------------------------------------------
 let engineRef = null;
-let deviceRef = null; // diisi setelah WebGPU siap
-let isWebGPU = false;
 
 function uploadMesh(eid, mesh) {
   RenderMesh.meshes[eid]?.destroy();
@@ -394,7 +392,7 @@ function createNodeRaw(data) {
     addGrowable(world, eid, Renderable);
     addComponent(world, eid, RenderMesh);
     writeTransform(eid, data.transform);
-    if (deviceRef) rebuildMesh(eid);
+    if (engineRef && engineRef.rendererPlugin && engineRef.rendererPlugin.ready) rebuildMesh(eid);
   }
   const idx = data.orderIndex != null ? data.orderIndex : sceneOrder.length;
   sceneOrder.splice(idx, 0, eid);
@@ -1194,18 +1192,6 @@ async function main() {
       fail(err.message); 
       return;
     }
-  }
-
-  isWebGPU = engineRef.rendererPlugin.name === 'webgpu';
-  
-  const renderer = engineRef.rendererPlugin.raw;
-  let device = null;
-  let format = null;
-  
-  if (isWebGPU) {
-    deviceRef = renderer.device;
-    device = renderer.device;
-    format = renderer.format;
   }
 
   setStatus('Menyiapkan pipeline…', 0.3);

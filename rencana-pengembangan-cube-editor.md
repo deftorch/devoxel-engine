@@ -49,10 +49,10 @@ Sebelum menyentuh arsitektur apa pun.
 
 **Tujuan:** setelah Fase 2 selesai, `editor.js` seharusnya tidak punya baris `device.create...` atau `gl.` sama sekali.
 
-- [ ] Ganti seluruh blok pipeline/shader/buffer manual di `main()` (baris ~1200-1300 saat ini) dengan pemanggilan `engineRef.rendererPlugin.drawDebugPrimitives(cameraState, { lines: [...], tris: [...] })`.
-- [ ] Hapus `deviceRef`, akses `renderer.device` langsung, dan `LINE_SHADER` (WGSL) dari `editor.js` — semuanya sudah pindah ke Fase 2.
-- [ ] Update `rebuildMesh(eid)` (baris ~396, saat ini pakai `if (deviceRef) rebuildMesh(eid)`) agar tidak lagi bergantung pada `deviceRef` sebagai penanda "renderer siap" — pakai flag generik (`engineRef.rendererPlugin.ready`).
-- [ ] **Checkpoint:** cari `grep -n "device\.\|gl\." src/editor/editor.js` → hasilnya harus kosong.
+- [x] Ganti seluruh blok pipeline/shader/buffer manual di `main()` (baris ~1200-1300 saat ini) dengan pemanggilan `engineRef.rendererPlugin.drawDebugPrimitives(cameraState, { lines: [...], tris: [...] })`.
+- [x] Hapus `deviceRef`, akses `renderer.device` langsung, dan `LINE_SHADER` (WGSL) dari `editor.js` — semuanya sudah pindah ke Fase 2.
+- [x] Update `rebuildMesh(eid)` (baris ~396, saat ini pakai `if (deviceRef) rebuildMesh(eid)`) agar tidak lagi bergantung pada `deviceRef` sebagai penanda "renderer siap" — pakai flag generik (`engineRef.rendererPlugin.ready`).
+- [x] **Checkpoint:** cari `grep -n "device\.\|gl\." src/editor/editor.js` → hasilnya harus kosong.
 
 ---
 
