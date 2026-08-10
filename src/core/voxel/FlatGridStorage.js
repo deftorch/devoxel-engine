@@ -19,4 +19,18 @@ export class FlatGridStorage extends VoxelStorage {
     if (x < 0 || x >= this.dims[0] || y < 0 || y >= this.dims[1] || z < 0 || z >= this.dims[2]) return;
     this.data[x + y * this.dims[0] + z * this.dims[0] * this.dims[1]] = val;
   }
+
+  serialize() {
+    return {
+      type: 'flatgrid',
+      dims: this.dims,
+      data: this.data, // Akan di-copy otomatis oleh postMessage, tapi kalau mau transfer bisa pakai data.buffer
+    };
+  }
+
+  static deserialize(payload) {
+    const storage = new FlatGridStorage(payload.dims[0], payload.dims[1], payload.dims[2]);
+    storage.data = new Uint8Array(payload.data);
+    return storage;
+  }
 }

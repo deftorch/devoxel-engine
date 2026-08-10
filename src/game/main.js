@@ -15,7 +15,6 @@ import { createMovementSystem } from '../core/ecs/systems.js';
 import { VoxelEngine } from '../core/index.js';
 import { UIManager } from './ui/UIManager.js';
 import { InputManager } from './input/InputManager.js';
-import { ChunkMesherPool } from './world/ChunkMesherPool.js';
 import { CommandBus } from '../core/api/CommandBus.js';
 import { generateChunkVoxels } from './world/chunk.js';
 
@@ -32,7 +31,7 @@ async function main() {
     engine = new VoxelEngine({
       chunkSize: [CHUNK_SX, CHUNK_SY, CHUNK_SZ],
       storage: 'flatgrid', // Default saat awal
-      mesher: 'greedy',
+      mesher: 'worker-greedy',
       renderer: currentRenderMode === 'raytrace' ? 'raytrace' : 'webgpu'
     });
     await engine.start(ui.canvas);
@@ -91,39 +90,9 @@ async function main() {
   // Panggil listener untuk engine pertama kali
   if (engine) setupEngineListeners(engine);
 
-  const poolSize = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 1));
-  ui.setStatus(`Menyiapkan ${poolSize} worker…`, 0);
-
-  const pool = new ChunkMesherPool(poolSize);
-
-  // FASE 3: Jembatan Worker ke Engine
-  function uploadChunkMesh(cx, cz, vertexData, indexData, indexCount, rtData) {
-    const chunk = engine.getOrCreateChunk(cx, 0, cz);
-    
-    // Inject data storage dari main thread (cepat ~1ms per chunk)
-    const storageType = document.getElementById('storage-select').value;
-    const terrainType = document.getElementById('terrain-select').value;
-    chunk.storage = generateChunkVoxels(cx, cz, storageType, terrainType);
-
-    if (currentRenderMode === 'raster') {
-      chunk.mesh = { vertexData, indexData, indexCount };
-      chunk.dirty = false;
-      engine.emit('afterMesh', { chunk, meshData: chunk.mesh });
-    } else {
-      chunk.mesh = { rtData };
-      chunk.dirty = false;
-      engine.emit('afterMesh', { chunk, meshData: chunk.mesh });
-    }
-  }
-
   let benchmarkStats = { type: 'flat', genMs: 0, meshMs: 0, nodes: 0 };
 
   async function buildWorld(storageType, terrainType, renderMode) {
-    // Fase 0.1: hanya BrickMapStorage yang punya serialize() (lihat BrickMapStorage.js:74).
-    // Kalau renderMode==='raytrace' tapi storageType!=='brickmap', mesher.worker.js akan
-    // mengirim rtData: null dan uploadChunkMesh akan diam-diam skip upload (layar kosong
-    // tanpa penjelasan). Ditangani di sini dengan pesan error eksplisit, bukan auto-switch,
-    // supaya pilihan storage user tidak diubah diam-diam.
     if (renderMode === 'raytrace' && storageType !== 'brickmap') {
       ui.fail(
         `Mode VoxelRT hanya mendukung storage 'brickmap'. ` + `Storage '${storageType}' tidak punya serialize().`
@@ -141,21 +110,48 @@ async function main() {
 
     benchmarkStats.type = storageType;
     try {
-      const stats = await pool.processAllChunks(
-        (received, total) => {
-          ui.setStatus(
-            `Benchmarking: ${terrainType} - ${storageType.toUpperCase()}… (${received}/${total})`,
-            received / total
-          );
-        },
-        uploadChunkMesh,
-        storageType,
-        terrainType,
-        renderMode
-      );
-      benchmarkStats.genMs = stats.genMs;
-      benchmarkStats.meshMs = stats.meshMs;
-      benchmarkStats.nodes = stats.nodes;
+      const totalChunks = WORLD_CHUNKS * WORLD_CHUNKS;
+      let received = 0;
+      let t0 = performance.now();
+
+      // Fase 3: Generate terrain murni di Main Thread (cepat)
+      ui.setStatus(`Membangkitkan Terrain...`, 0);
+      for (let cx = 0; cx < WORLD_CHUNKS; cx++) {
+        for (let cz = 0; cz < WORLD_CHUNKS; cz++) {
+           const chunk = engine.getOrCreateChunk(cx, 0, cz);
+           chunk.storage = generateChunkVoxels(cx, cz, storageType, terrainType);
+           chunk.dirty = true;
+        }
+      }
+      
+      benchmarkStats.genMs = performance.now() - t0;
+      benchmarkStats.meshMs = 0;
+      benchmarkStats.nodes = 0;
+
+      let resolveBenchmark;
+      const benchmarkPromise = new Promise(r => resolveBenchmark = r);
+
+      const onChunkMesh = ({ meshData }) => {
+        received++;
+        ui.setStatus(
+          `Meshing (Pekerja Belakang Layar): ${terrainType} - ${storageType.toUpperCase()}… (${received}/${totalChunks})`,
+          received / totalChunks
+        );
+        if (meshData && meshData.stats) {
+           benchmarkStats.meshMs += meshData.stats.meshMs;
+           benchmarkStats.nodes += meshData.stats.nodes;
+        }
+        if (received === totalChunks) {
+           engine.off('afterMesh', onChunkMesh);
+           resolveBenchmark();
+        }
+      };
+
+      engine.on('afterMesh', onChunkMesh);
+      engine.remeshDirtyChunks(); // Minta Engine memproses via AsyncWorkerMesher
+      
+      await benchmarkPromise;
+
     } catch (e) {
       ui.fail(e.message);
       return;
@@ -428,7 +424,7 @@ async function main() {
       ui.updateHUD(
         fpsDisplay,
         chunkEntities.length,
-        poolSize,
+        '-', // poolSize tidak lagi relevan di main.js
         cameraState,
         lastRemoved,
         benchmarkStats,

@@ -200,11 +200,21 @@ export class VoxelEngine {
     };
 
     this.emit('beforeMesh', chunk);
-    const meshData = this.mesherPlugin.generateMesh(chunk.storage, ctx);
-    chunk.mesh = meshData;
-    chunk.dirty = false;
-    this.emit('afterMesh', { chunk, meshData });
-    return meshData;
+    const result = this.mesherPlugin.generateMesh(chunk.storage, ctx);
+    
+    if (result instanceof Promise) {
+      chunk.dirty = false;
+      result.then(meshData => {
+        chunk.mesh = meshData;
+        this.emit('afterMesh', { chunk, meshData });
+      }).catch(e => console.error('[VoxelEngine] Error saat async meshing:', e));
+      return result;
+    } else {
+      chunk.mesh = result;
+      chunk.dirty = false;
+      this.emit('afterMesh', { chunk, meshData: result });
+      return result;
+    }
   }
 
   /** Rebuild every chunk currently marked dirty. */
