@@ -45,12 +45,18 @@ describe('PluginRegistry — storage', () => {
 
   test('overwriting an existing plugin id warns', () => {
     const registry = new PluginRegistry();
-    const warn = mock.method(console, 'warn', () => {});
+    const originalWarn = console.warn;
+    let callCount = 0;
+    let lastMsg = '';
+    console.warn = (msg) => {
+      callCount++;
+      lastMsg = msg;
+    };
     registry.registerStorage('dup', () => ({}));
     registry.registerStorage('dup', () => ({}));
-    assert.equal(warn.mock.callCount(), 1);
-    assert.match(warn.mock.calls[0].arguments[0], /Overwriting storage plugin: "dup"/);
-    warn.mock.restore();
+    assert.equal(callCount, 1);
+    assert.match(lastMsg, /Overwriting storage plugin: "dup"/);
+    console.warn = originalWarn;
   });
 });
 
