@@ -1,4 +1,6 @@
-import { createWorld, addEntity, removeEntity, addComponent, observe, onRemove } from 'https://esm.sh/bitecs@0.4.0';
+import { addEntity, removeEntity, addComponent, observe, onRemove } from "https://esm.sh/bitecs@0.4.0";
+import { world, growableComponent, addGrowable, Renderable, RenderMesh } from "../core/ecs/components.js";
+import { VoxelEngine } from "../core/index.js";
 
 // =============================================================================
 // Cube Editor Prototype — dibangun dengan mengadaptasi pola dari voxel-engine
@@ -163,31 +165,7 @@ function mat4Multiply(a, b) {
 // -----------------------------------------------------------------------
 // 3. ECS: world + component
 // -----------------------------------------------------------------------
-const world = createWorld();
-
-// Growable typed-array component, sama seperti pola di voxel-engine: auto
-// resize (double growth) supaya tidak overflow diam-diam saat entity
-// bertambah banyak.
-function growableComponent(fields, initialCapacity = 32) {
-  const store = { __capacity: initialCapacity };
-  for (const [name, Ctor] of Object.entries(fields)) store[name] = new Ctor(initialCapacity);
-  store.__ensure = function (eid) {
-    if (eid < store.__capacity) return;
-    let newCap = store.__capacity;
-    while (newCap <= eid) newCap *= 2;
-    for (const [name, Ctor] of Object.entries(fields)) {
-      const grown = new Ctor(newCap);
-      grown.set(store[name]);
-      store[name] = grown;
-    }
-    store.__capacity = newCap;
-  };
-  return store;
-}
-function addGrowable(world, eid, component) {
-  component.__ensure(eid);
-  addComponent(world, eid, component);
-}
+// growableComponent dan Renderable kini diambil dari VoxelEngine core
 
 // origin = sudut "from" kubus, size = lebar/tinggi/dalam, pivot = titik
 // rotasi (biasanya tengah kubus), rotation = euler derajat.
@@ -212,21 +190,9 @@ const ColorComp = growableComponent({ r: Float32Array, g: Float32Array, b: Float
 // parent = -1 berarti root. isGroup: node organisasi tanpa geometri sendiri
 // (EXTENSION POINT: cocok jadi "bone" kalau nanti ditambah animasi).
 const NodeMeta = growableComponent({ parent: Int32Array, isGroup: Uint8Array }, 32);
-const Renderable = growableComponent({ indexCount: Int32Array }, 32);
-
-// Data non-numerik (string / object GPU) disimpan sebagai side-table plain
-// array yang didaftarkan lewat addComponent biasa — pola yang sama dipakai
-// GPUMesh di voxel-engine asli, supaya lifecycle-nya (removeEntity ->
-// onRemove) tetap konsisten walau backing store-nya bukan typed array.
+// NodeMeta, Transform, ColorComp tidak dihapus.
+// Renderable sekarang diimpor dari core.
 const NameComp = { value: [] };
-const GPUMesh = { vertexBuffer: [], indexBuffer: [] };
-
-observe(world, onRemove(GPUMesh), (eid) => {
-  GPUMesh.vertexBuffer[eid]?.destroy();
-  GPUMesh.indexBuffer[eid]?.destroy();
-  GPUMesh.vertexBuffer[eid] = null;
-  GPUMesh.indexBuffer[eid] = null;
-});
 observe(world, onRemove(NameComp), (eid) => {
   NameComp.value[eid] = null;
 });
@@ -346,27 +312,13 @@ function buildCubeMesh(t) {
 // -----------------------------------------------------------------------
 // 6. Scene ops — semua mutasi lewat sini supaya History konsisten.
 // -----------------------------------------------------------------------
+let engineRef = null;
 let deviceRef = null; // diisi setelah WebGPU siap
 
 function uploadMesh(eid, mesh) {
-  GPUMesh.vertexBuffer[eid]?.destroy();
-  GPUMesh.indexBuffer[eid]?.destroy();
-  const vb = deviceRef.createBuffer({
-    size: mesh.vertexData.byteLength,
-    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    mappedAtCreation: true,
-  });
-  new Float32Array(vb.getMappedRange()).set(mesh.vertexData);
-  vb.unmap();
-  const ib = deviceRef.createBuffer({
-    size: Math.ceil(mesh.indexData.byteLength / 4) * 4,
-    usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
-    mappedAtCreation: true,
-  });
-  new Uint32Array(ib.getMappedRange()).set(mesh.indexData);
-  ib.unmap();
-  GPUMesh.vertexBuffer[eid] = vb;
-  GPUMesh.indexBuffer[eid] = ib;
+  RenderMesh.meshes[eid]?.destroy();
+  const created = engineRef.rendererPlugin.createMesh(mesh.vertexData, mesh.indexData);
+  RenderMesh.meshes[eid] = created;
   Renderable.indexCount[eid] = mesh.indexCount;
 }
 function rebuildMesh(eid) {
@@ -439,7 +391,7 @@ function createNodeRaw(data) {
     addGrowable(world, eid, Transform);
     addGrowable(world, eid, ColorComp);
     addGrowable(world, eid, Renderable);
-    addComponent(world, eid, GPUMesh);
+    addComponent(world, eid, RenderMesh);
     writeTransform(eid, data.transform);
     if (deviceRef) rebuildMesh(eid);
   }
@@ -755,57 +707,7 @@ function refreshProperties() {
 // -----------------------------------------------------------------------
 // 9. WebGPU init
 // -----------------------------------------------------------------------
-async function initGPU() {
-  if (!('gpu' in navigator)) {
-    throw new Error(
-      'WebGPU tidak tersedia di browser ini.\n\n' +
-        'Per pertengahan 2026, dukungan WebGPU sudah baseline di Chrome/Edge 113+, ' +
-        'Safari 26+ (macOS Tahoe/iOS 26), dan Firefox 141+ (Windows) / 145+ (Apple Silicon). ' +
-        'Coba buka di Chrome/Edge terbaru.'
-    );
-  }
-  const adapter = await navigator.gpu.requestAdapter();
-  if (!adapter) throw new Error('Tidak ada GPU adapter yang cocok ditemukan.');
-  const device = await adapter.requestDevice();
-  const context = canvas.getContext('webgpu');
-  const format = navigator.gpu.getPreferredCanvasFormat();
-
-  function resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = Math.max(1, Math.floor(rect.width * dpr));
-    canvas.height = Math.max(1, Math.floor(rect.height * dpr));
-    context.configure({ device, format, alphaMode: 'opaque' });
-  }
-  resize();
-  window.addEventListener('resize', resize);
-  return { device, context, format };
-}
-
-const SOLID_SHADER = /* wgsl */ `
-struct Uniforms { viewProj : mat4x4<f32>, cameraPos : vec3<f32>, pad : f32 };
-@group(0) @binding(0) var<uniform> u : Uniforms;
-struct VOut { @builtin(position) pos : vec4<f32>, @location(0) normal : vec3<f32>, @location(1) color : vec3<f32> };
-@vertex
-fn vs_main(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) color: vec3<f32>) -> VOut {
-  var out: VOut;
-  out.pos = u.viewProj * vec4<f32>(position, 1.0);
-  out.normal = normal;
-  out.color = color;
-  return out;
-}
-@fragment
-fn fs_main(in: VOut) -> @location(0) vec4<f32> {
-  let lightDir = normalize(vec3<f32>(0.45, 0.85, 0.3));
-  let skyColor = vec3<f32>(0.30, 0.36, 0.46);
-  let groundAmbient = vec3<f32>(0.16, 0.15, 0.14);
-  let hemi = clamp(normalize(in.normal).y * 0.5 + 0.5, 0.0, 1.0);
-  let ambient = mix(groundAmbient, skyColor, hemi);
-  let diffuse = max(dot(normalize(in.normal), lightDir), 0.0);
-  let lit = in.color * (ambient * 0.9 + diffuse * 0.75);
-  return vec4<f32>(lit, 1.0);
-}
-`;
+// WebGPU init dan SOLID_SHADER sudah dikelola oleh VoxelEngine
 const LINE_SHADER = /* wgsl */ `
 struct LU { viewProj : mat4x4<f32> };
 @group(0) @binding(0) var<uniform> lu : LU;
@@ -957,7 +859,7 @@ function cameraBasis() {
   const eye = vSub(camera.target, vScale(forward, camera.distance));
   return { eye, forward, right, up };
 }
-const FOV_Y = Math.PI / 3.2;
+const FOV_Y = Math.PI / 3;
 // Konversi koordinat layar -> ray dunia (dipakai buat pick objek maupun pick gizmo).
 function screenToRay(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
@@ -1282,49 +1184,18 @@ window.addEventListener('keydown', (e) => {
 // 13. Main / render loop
 // -----------------------------------------------------------------------
 async function main() {
-  let gpu;
+  setStatus('Menginisialisasi GPU...', 0);
   try {
-    gpu = await initGPU();
-  } catch (e) {
-    fail(e.message);
-    return;
-  }
-  const { device, context, format } = gpu;
-  deviceRef = device;
+    engineRef = new VoxelEngine({ chunkSize: [32, 32, 32], storage: 'flatgrid', mesher: 'greedy', renderer: 'webgpu' });
+    await engineRef.start(canvas);
+  } catch (err) { fail(err.message); return; }
+
+  const renderer = engineRef.rendererPlugin.raw;
+  deviceRef = renderer.device;
+  const device = renderer.device;
+  const format = renderer.format;
 
   setStatus('Menyiapkan pipeline…', 0.3);
-
-  // --- Solid pipeline (cube) ---
-  const solidModule = device.createShaderModule({ code: SOLID_SHADER });
-  const solidUniformBuffer = device.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-  const solidBGL = device.createBindGroupLayout({
-    entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }],
-  });
-  const solidBG = device.createBindGroup({
-    layout: solidBGL,
-    entries: [{ binding: 0, resource: { buffer: solidUniformBuffer } }],
-  });
-  const solidPipeline = device.createRenderPipeline({
-    layout: device.createPipelineLayout({ bindGroupLayouts: [solidBGL] }),
-    vertex: {
-      module: solidModule,
-      entryPoint: 'vs_main',
-      buffers: [
-        {
-          arrayStride: 9 * 4,
-          attributes: [
-            { shaderLocation: 0, offset: 0, format: 'float32x3' },
-            { shaderLocation: 1, offset: 12, format: 'float32x3' },
-            { shaderLocation: 2, offset: 24, format: 'float32x3' },
-          ],
-        },
-      ],
-    },
-    fragment: { module: solidModule, entryPoint: 'fs_main', targets: [{ format }] },
-    primitive: { topology: 'triangle-list', cullMode: 'back', frontFace: 'ccw' },
-    depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
-    multisample: { count: 4 },
-  });
 
   // --- Line pipeline (grid + selection outline) ---
   const lineModule = device.createShaderModule({ code: LINE_SHADER });
@@ -1357,10 +1228,7 @@ async function main() {
     multisample: { count: 4 },
   });
 
-  // --- Gizmo pipelines: sama shader unlit dengan line pipeline, tapi depth
-  // test dimatikan (selalu tampil di atas) supaya handle tetap bisa
-  // diklik/dilihat walau ketutup kubus lain — perilaku standar gizmo di
-  // editor 3D (Blockbench, Blender, dll).
+  // --- Gizmo pipelines ---
   const gizmoLinePipeline = device.createRenderPipeline({
     layout: device.createPipelineLayout({ bindGroupLayouts: [lineBGL] }),
     vertex: {
@@ -1402,7 +1270,7 @@ async function main() {
     multisample: { count: 4 },
   });
 
-  // Grid statis (dibangun sekali)
+  // Grid statis
   const gridLines = buildGridLines(32, 2);
   const gridVertexData = interleaveLine(gridLines.positions, gridLines.colors);
   const gridVB = device.createBuffer({
@@ -1414,12 +1282,7 @@ async function main() {
   gridVB.unmap();
   const gridVertexCount = gridVertexData.length / 6;
 
-  // Buffer outline seleksi & gizmo dialokasikan SEKALI dengan ukuran tetap
-  // (12 edge box, 3 shaft, 3*N segmen kepala panah), lalu ditulis ulang tiap
-  // frame lewat writeBuffer — lebih murah daripada createBuffer tiap frame,
-  // dan otomatis sinkron tiap frame tanpa perlu "hook" manual di tiap
-  // tempat yang mengubah Transform (mengganti pola monkey-patch sebelumnya).
-  const OUTLINE_VERTS = 24; // 12 edge * 2 vertex
+  const OUTLINE_VERTS = 24; 
   const outlineVB = device.createBuffer({
     size: OUTLINE_VERTS * 6 * 4,
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
@@ -1435,37 +1298,12 @@ async function main() {
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
   });
 
-  let depthTexture = null,
-    msaaTexture = null;
-  function ensureRenderTargets() {
-    if (depthTexture && depthTexture.width === canvas.width && depthTexture.height === canvas.height) return;
-    depthTexture?.destroy();
-    msaaTexture?.destroy();
-    depthTexture = device.createTexture({
-      size: [canvas.width, canvas.height],
-      format: 'depth24plus',
-      sampleCount: 4,
-      usage: GPUTextureUsage.RENDER_ATTACHMENT,
-    });
-    msaaTexture = device.createTexture({
-      size: [canvas.width, canvas.height],
-      format,
-      sampleCount: 4,
-      usage: GPUTextureUsage.RENDER_ATTACHMENT,
-    });
-  }
-
-  // Seed scene awal dengan satu cube contoh (seperti file baru di Blockbench).
   addCube();
-
   overlay.classList.add('hidden');
   refreshOutliner();
 
   let lastTime = performance.now();
-  let fpsAcc = 0,
-    fpsFrames = 0,
-    fpsDisplay = 0;
-  const solidUniformArray = new Float32Array(20);
+  let fpsAcc = 0, fpsFrames = 0, fpsDisplay = 0;
   const lineUniformArray = new Float32Array(16);
 
   function frame(now) {
@@ -1481,7 +1319,6 @@ async function main() {
         statFps.textContent = fpsDisplay;
       }
 
-      ensureRenderTargets();
       const aspect = canvas.width / canvas.height;
       const proj = mat4Perspective(FOV_Y, aspect, 0.1, 500);
       const { eye, forward } = cameraBasis();
@@ -1489,9 +1326,6 @@ async function main() {
       const view = mat4LookAt(eye, center, [0, 1, 0]);
       const viewProj = mat4Multiply(proj, view);
 
-      solidUniformArray.set(viewProj, 0);
-      solidUniformArray.set(eye, 16);
-      device.queue.writeBuffer(solidUniformBuffer, 0, solidUniformArray);
       lineUniformArray.set(viewProj, 0);
       device.queue.writeBuffer(lineUniformBuffer, 0, lineUniformArray);
 
@@ -1504,64 +1338,35 @@ async function main() {
         device.queue.writeBuffer(gizmoTriVB, 0, gizmoGeo.triData);
       }
 
-      const encoder = device.createCommandEncoder();
-      const pass = encoder.beginRenderPass({
-        colorAttachments: [
-          {
-            view: msaaTexture.createView(),
-            resolveTarget: context.getCurrentTexture().createView(),
-            clearValue: { r: 0.09, g: 0.11, b: 0.15, a: 1 },
-            loadOp: 'clear',
-            storeOp: 'discard',
-          },
-        ],
-        depthStencilAttachment: {
-          view: depthTexture.createView(),
-          depthClearValue: 1.0,
-          depthLoadOp: 'clear',
-          depthStoreOp: 'store',
-        },
-      });
+      const cameraState = {
+        eye,
+        yaw: camera.yaw,
+        pitch: camera.pitch,
+        onPostDraw: (pass) => {
+          pass.setPipeline(linePipeline);
+          pass.setBindGroup(0, lineBG);
+          pass.setVertexBuffer(0, gridVB);
+          pass.draw(gridVertexCount);
 
-      // Grid
-      pass.setPipeline(linePipeline);
-      pass.setBindGroup(0, lineBG);
-      pass.setVertexBuffer(0, gridVB);
-      pass.draw(gridVertexCount);
+          if (hasSelection) {
+            pass.setPipeline(linePipeline);
+            pass.setBindGroup(0, lineBG);
+            pass.setVertexBuffer(0, outlineVB);
+            pass.draw(OUTLINE_VERTS);
 
-      // Cubes
-      pass.setPipeline(solidPipeline);
-      pass.setBindGroup(0, solidBG);
-      for (const eid of sceneOrder) {
-        if (NodeMeta.isGroup[eid]) continue;
-        const vb = GPUMesh.vertexBuffer[eid],
-          ib = GPUMesh.indexBuffer[eid];
-        if (!vb || !ib) continue;
-        pass.setVertexBuffer(0, vb);
-        pass.setIndexBuffer(ib, 'uint32');
-        pass.drawIndexed(Renderable.indexCount[eid]);
-      }
+            pass.setPipeline(gizmoTriPipeline);
+            pass.setBindGroup(0, lineBG);
+            pass.setVertexBuffer(0, gizmoTriVB);
+            pass.draw(GIZMO_TRI_VERTS);
+            pass.setPipeline(gizmoLinePipeline);
+            pass.setBindGroup(0, lineBG);
+            pass.setVertexBuffer(0, gizmoLineVB);
+            pass.draw(GIZMO_LINE_VERTS);
+          }
+        }
+      };
 
-      if (hasSelection) {
-        // Selection outline (masih pakai depth test normal supaya box terasa "menempel" di kubus)
-        pass.setPipeline(linePipeline);
-        pass.setBindGroup(0, lineBG);
-        pass.setVertexBuffer(0, outlineVB);
-        pass.draw(OUTLINE_VERTS);
-
-        // Gizmo (depth diabaikan — selalu di atas, standar UX editor 3D)
-        pass.setPipeline(gizmoTriPipeline);
-        pass.setBindGroup(0, lineBG);
-        pass.setVertexBuffer(0, gizmoTriVB);
-        pass.draw(GIZMO_TRI_VERTS);
-        pass.setPipeline(gizmoLinePipeline);
-        pass.setBindGroup(0, lineBG);
-        pass.setVertexBuffer(0, gizmoLineVB);
-        pass.draw(GIZMO_LINE_VERTS);
-      }
-
-      pass.end();
-      device.queue.submit([encoder.finish()]);
+      engineRef.rendererPlugin.draw(cameraState, sceneOrder, Renderable, RenderMesh);
       requestAnimationFrame(frame);
     } catch (err) {
       fail('Error di render loop:\n' + (err.stack || err.message));

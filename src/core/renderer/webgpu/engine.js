@@ -10,8 +10,9 @@ export async function initWebGPU(canvas) {
 
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width = Math.floor(innerWidth * dpr);
-    canvas.height = Math.floor(innerHeight * dpr);
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+    canvas.height = Math.max(1, Math.floor(rect.height * dpr));
     context.configure({ device, format, alphaMode: 'opaque' });
   }
   resize();
@@ -145,8 +146,19 @@ export async function initWebGPU(canvas) {
         pass.setIndexBuffer(mesh.indexBuffer, 'uint32');
         pass.drawIndexed(Renderable.indexCount[eid]);
       }
+
+      // Hook ekstensi untuk merender primitif kustom (misal: Grid / Outline) di pass yang sama
+      if (typeof cameraState.onPostDraw === 'function') {
+         cameraState.onPostDraw(pass);
+      }
+
       pass.end();
       device.queue.submit([encoder.finish()]);
     },
+    
+    // Mengekspos raw device untuk kebutuhan tool/editor eksternal
+    device,
+    context,
+    format
   };
 }
