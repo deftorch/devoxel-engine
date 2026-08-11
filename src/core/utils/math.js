@@ -169,6 +169,53 @@ export function projectToScreen(viewProj, worldPoint, screenW, screenH) {
   };
 }
 
+/**
+ * Intersects a ray with a plane. Returns the world-space intersection
+ * point, or null if the ray is parallel to the plane (or the plane is
+ * behind the ray origin) — callers must skip the interaction on null
+ * rather than silently continuing with a stale/garbage point.
+ * @param {Vector3} ro - ray origin
+ * @param {Vector3} rd - ray direction (should be normalized)
+ * @param {Vector3} planePoint - any point on the plane
+ * @param {Vector3} planeNormal - plane normal (should be normalized)
+ */
+export function rayPlaneIntersect(ro, rd, planePoint, planeNormal) {
+  const denom = vDot(rd, planeNormal);
+  if (Math.abs(denom) < 1e-7) return null; // ray parallel to plane
+  const t = vDot(vSub(planePoint, ro), planeNormal) / denom;
+  if (t < 0) return null; // plane is behind the ray origin
+  return vAdd(ro, vScale(rd, t));
+}
+
+/**
+ * Decomposes a 3x3 rotation matrix back into the (rx, ry, rz) Euler
+ * angles (in degrees) matching this project's rotationMat3() convention
+ * (R = Rz(rz) * Ry(ry) * Rx(rx), row-major, mat3Apply(R,v) = R*v).
+ * Standard ZYX Tait-Bryan extraction; degenerates near the gimbal-lock
+ * pole (|R[2][0]| ~ 1, i.e. ry ~ +-90deg) by folding all remaining
+ * rotation into rz and leaving rx at 0 — a known, accepted limitation
+ * shared by every plain-Euler (non-quaternion) rotate gizmo.
+ * @param {number[]} m - 9-element row-major rotation matrix
+ * @returns {{rx:number, ry:number, rz:number}} degrees
+ */
+export function mat3ToEulerXYZ(m) {
+  const toDeg = 180 / Math.PI;
+  const clampedR20 = Math.max(-1, Math.min(1, -m[6]));
+  const ry = Math.asin(clampedR20);
+  const cy = Math.cos(ry);
+  let rx, rz;
+  if (Math.abs(cy) > 1e-6) {
+    rx = Math.atan2(m[7], m[8]);
+    rz = Math.atan2(m[3], m[0]);
+  } else {
+    // Gimbal lock: rx and rz become redundant (same axis) — fold
+    // everything into rz, leave rx at 0.
+    rx = 0;
+    rz = Math.atan2(-m[1], m[4]);
+  }
+  return { rx: rx * toDeg, ry: ry * toDeg, rz: rz * toDeg };
+}
+
 export function mat3RotX(a) {
   const c = Math.cos(a),
     s = Math.sin(a);

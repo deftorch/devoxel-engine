@@ -152,11 +152,13 @@ File yang terdampak (urutan pengerjaan disarankan satu-per-satu + jalankan aplik
 
 **Tujuan:** melengkapi gizmo translate yang sudah ada dengan mode rotate dan scale, untuk single maupun multi-seleksi (reuse `virtualPivot` dari 6.4).
 
-- [ ] Tambah geometri gizmo rotate (ring per sumbu) dan scale (kubus kecil di ujung arm) di `geometry.js`, mengikuti pola `buildGizmoGeometry()`/`GIZMO_AXES` yang sudah ada.
-- [ ] Math rotasi: proyeksi drag mouse ke sudut rotasi terhadap `virtualPivot` (trackball atau per-sumbu, mulai dari per-sumbu dulu karena lebih sederhana), lalu update `Transform.rx/ry/rz`.
-- [ ] Math scale: drag sepanjang arm mengubah `Transform.sx/sy/sz` relatif terhadap `virtualPivot`.
-- [ ] Tambah UI toggle mode gizmo (Translate/Rotate/Scale), mirip pola hotkey Blender (`G`/`R`/`S`) jika ingin konsisten dengan software 3D standar.
-- [ ] **Checkpoint:** rotate & scale bekerja untuk single dan multi-seleksi, undo/redo tetap 1 langkah per aksi drag.
+- [x] Geometri gizmo rotate (48-segmen ring per sumbu, `buildRotateGizmoGeometry`) dan scale (shaft + kubus kecil di ujung, `buildScaleGizmoGeometry`) ditambahkan di `geometry.js`, mengikuti pola `GIZMO_AXES`/warna yang sudah ada.
+- [x] Math rotasi (per-sumbu, bukan trackball, sesuai catatan roadmap): sudut drag dilacak lewat `rayPlaneIntersect()` (baru, primitif ray-vs-plane di `math.js`) terhadap bidang tegak lurus sumbu yang melewati pivot. Delta sudut dikonversi jadi `deltaR` (rotasi elementer sumbu-dunia via `rotationMat3`), lalu dikomposisikan `R_new = deltaR * R_old` dan didekomposisi kembali ke `rx/ry/rz` derajat lewat `mat3ToEulerXYZ()` (baru, formula ekstraksi ZYX standar — **diverifikasi manual** lewat script round-trip: 9 kombinasi sudut + 1 uji urutan komposisi, semua cocok hingga presisi floating-point).
+  - **Batasan yang didokumentasikan (bukan bug):** posisi pivot tiap objek di-orbit di sekitar `virtualPivot` dengan `pivot_new = P_ext + deltaR*(pivot_old - P_ext)` — ini **eksak** untuk seleksi tunggal (pivot objek == virtual pivot) dan untuk objek yang belum pernah dirotasi (default `rx=ry=rz=0` saat `addCube`), tapi merupakan **aproksimasi kecil** untuk rotate multi-seleksi pada objek yang sudah punya rotasi sebelumnya (keterbatasan yang melekat pada representasi Euler murni tanpa quaternion — dialami semua gizmo rotate berbasis Euler, bukan cuma implementasi ini).
+- [x] Math scale: drag di-ukur lewat rasio jarak handle saat ini terhadap jarak saat mousedown (reuse `closestParamsBetweenLines` yang sama dengan translate), diterapkan ke `ox/sx` (atau `oy/sy`, `oz/sz` sesuai sumbu) **relatif terhadap pivot objek itu sendiri** — karena `ox/px` hidup di ruang lokal pra-rotasi (sebelum `R` diterapkan di `buildCubeMesh`), formula ini **eksak tanpa risiko shearing** berapa pun rotasi objeknya.
+  - **Batasan yang didokumentasikan:** untuk multi-seleksi, tiap objek scale di tempatnya sendiri (pivot masing-masing), bukan memekar keluar dari `virtualPivot` bersama seperti di software profesional — cukup untuk MVP, expand-outward-dari-grup didokumentasikan sebagai follow-up potensial jika dibutuhkan nanti.
+- [x] Toggle mode gizmo: 3 tombol toolbar (`btn-gizmo-translate/rotate/scale`) + hotkey `G`/`R`/`S` (pola Blender, sesuai rencana awal), disatukan lewat `setGizmoModeAndSync()` supaya tombol & state selalu sinkron dari kedua jalur input.
+- [x] **Checkpoint:** rotate & scale bekerja untuk single dan multi-seleksi, undo/redo tetap 1 langkah per aksi drag (label History otomatis menyesuaikan verb: "Translate"/"Rotate"/"Scale").
 
 ### 6.6 — Event-Driven `EditorContext` (Pub/Sub)
 

@@ -1,10 +1,16 @@
-import { vAdd, vSub, vScale, vCross, vNorm, vDot } from "../core/utils/math.js?v=2";
+import { vAdd, vSub, vScale, vCross, vNorm, vDot, rayPlaneIntersect, mat3ToEulerXYZ, mat3Mul, mat3Apply, rotationMat3 } from "../core/utils/math.js?v=2";
 import { EditorContext, NodeMeta, getSelection } from "./state.js";
 import { readTransform, writeTransform, rebuildMesh, getVirtualPivot } from "./scene-ops.js";
 import { syncPropertyInputs } from "./ui/properties.js";
 import { GIZMO_AXES, gizmoArmLength } from "./geometry.js";
 import { pickAtScreen, frustumSelect } from "./picking.js";
 import History from "./history.js";
+
+let gizmoMode = 'translate'; // 'translate' | 'rotate' | 'scale'
+export function getGizmoMode() { return gizmoMode; }
+export function setGizmoMode(mode) {
+  if (mode === 'translate' || mode === 'rotate' || mode === 'scale') gizmoMode = mode;
+}
 
 export function cameraBasis() {
   const cp = Math.cos(EditorContext.camera.pitch),
@@ -65,6 +71,42 @@ function pickGizmoAxis(clientX, clientY, canvas) {
   return best;
 }
 
+function pickRotateRing(clientX, clientY, canvas) {
+  const pivot = getVirtualPivot();
+  if (!pivot) return null;
+  const { ro, rd } = screenToRay(clientX, clientY, canvas);
+  const armLen = gizmoArmLength();
+  const radius = armLen * 0.85;
+  const threshold = armLen * 0.12;
+  let best = null;
+  for (const ax of GIZMO_AXES) {
+    const hitPoint = rayPlaneIntersect(ro, rd, pivot, ax.dir);
+    if (!hitPoint) continue;
+    const dist = Math.abs(Math.hypot(...vSub(hitPoint, pivot)) - radius);
+    if (dist < threshold && (!best || dist < best.dist)) best = { axis: ax.key, dir: ax.dir, dist, hitPoint };
+  }
+  return best;
+}
+
+function pickScaleHandle(clientX, clientY, canvas) {
+  // Scale handles sit on the same shafts as translate arrows, just
+  // rendered with a cube tip instead of a cone — reuse the same
+  // axis-line hit test.
+  return pickGizmoAxis(clientX, clientY, canvas);
+}
+
+/** Signed angle (radians) of vector `v` around `axisDir`, measured from reference plane basis (p1, p2). */
+function angleAroundAxis(v, p1, p2) {
+  return Math.atan2(vDot(v, p2), vDot(v, p1));
+}
+
+function ringPlaneBasis(axisDir) {
+  const ref = Math.abs(axisDir[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+  const p1 = vNorm(vCross(axisDir, ref));
+  const p2 = vCross(axisDir, p1);
+  return { p1, p2 };
+}
+
 const MARQUEE_THRESHOLD = 4; // px — below this, a left-button interaction is treated as a click, not a drag
 
 function getMarqueeBox() {
@@ -111,7 +153,13 @@ export function initCameraInput(canvas) {
 
     if (e.button === 0) {
       const selection = Array.from(getSelection());
-      const hit = pickGizmoAxis(e.clientX, e.clientY, canvas);
+      const pivot = getVirtualPivot();
+      let hit = null;
+      if (pivot) {
+        if (gizmoMode === 'translate') hit = pickGizmoAxis(e.clientX, e.clientY, canvas);
+        else if (gizmoMode === 'rotate') hit = pickRotateRing(e.clientX, e.clientY, canvas);
+        else if (gizmoMode === 'scale') hit = pickScaleHandle(e.clientX, e.clientY, canvas);
+      }
       if (hit) {
         inputMode = 'gizmo';
         const startTransforms = [];
@@ -120,7 +168,15 @@ export function initCameraInput(canvas) {
             startTransforms.push({ eid, t: readTransform(eid) });
           }
         }
-        gizmoDrag = { axis: hit.axis, dir: hit.dir, startS: hit.s, startTransforms, pivot: getVirtualPivot() };
+        if (gizmoMode === 'translate') {
+          gizmoDrag = { mode: 'translate', axis: hit.axis, dir: hit.dir, startS: hit.s, startTransforms, pivot };
+        } else if (gizmoMode === 'rotate') {
+          const { p1, p2 } = ringPlaneBasis(hit.dir);
+          const startAngle = angleAroundAxis(vSub(hit.hitPoint, pivot), p1, p2);
+          gizmoDrag = { mode: 'rotate', axis: hit.axis, dir: hit.dir, p1, p2, startAngle, startTransforms, pivot };
+        } else if (gizmoMode === 'scale') {
+          gizmoDrag = { mode: 'scale', axis: hit.axis, dir: hit.dir, startS: hit.s, startTransforms, pivot };
+        }
       } else {
         // Not yet known whether this is a click or a marquee drag — resolved
         // on mousemove (once past MARQUEE_THRESHOLD) / mouseup (see below).
@@ -140,8 +196,9 @@ export function initCameraInput(canvas) {
     if (inputMode === 'gizmo' && gizmoDrag) {
       if (moved > 1) {
         const snapshots = gizmoDrag.startTransforms.map(st => ({ eid: st.eid, startT: st.t, newT: readTransform(st.eid) }));
-        const label = snapshots.length > 1 ? `Translate ${snapshots.length} Elements` : 'Translate Element';
-        
+        const verb = gizmoDrag.mode === 'translate' ? 'Translate' : gizmoDrag.mode === 'rotate' ? 'Rotate' : 'Scale';
+        const label = snapshots.length > 1 ? `${verb} ${snapshots.length} Elements` : `${verb} Element`;
+
         History.push({
             label,
             redo() {
@@ -183,23 +240,80 @@ export function initCameraInput(canvas) {
   window.addEventListener('mousemove', (e) => {
     if (inputMode === 'gizmo' && gizmoDrag) {
       const { ro, rd } = screenToRay(e.clientX, e.clientY, canvas);
-      const pivot = gizmoDrag.pivot;
-      const cp = closestParamsBetweenLines(pivot, gizmoDrag.dir, ro, rd);
-      if (cp) {
-        const delta = cp.s - gizmoDrag.startS;
-        for (const st of gizmoDrag.startTransforms) {
-          const t = { ...st.t };
-          t.ox += gizmoDrag.dir[0] * delta;
-          t.oy += gizmoDrag.dir[1] * delta;
-          t.oz += gizmoDrag.dir[2] * delta;
-          t.px += gizmoDrag.dir[0] * delta;
-          t.py += gizmoDrag.dir[1] * delta;
-          t.pz += gizmoDrag.dir[2] * delta;
-          writeTransform(st.eid, t);
-          rebuildMesh(st.eid);
+      if (gizmoDrag.mode === 'translate') {
+        const cp = closestParamsBetweenLines(gizmoDrag.pivot, gizmoDrag.dir, ro, rd);
+        if (cp) {
+          const delta = cp.s - gizmoDrag.startS;
+          for (const st of gizmoDrag.startTransforms) {
+            const t = { ...st.t };
+            t.ox += gizmoDrag.dir[0] * delta;
+            t.oy += gizmoDrag.dir[1] * delta;
+            t.oz += gizmoDrag.dir[2] * delta;
+            t.px += gizmoDrag.dir[0] * delta;
+            t.py += gizmoDrag.dir[1] * delta;
+            t.pz += gizmoDrag.dir[2] * delta;
+            writeTransform(st.eid, t);
+            rebuildMesh(st.eid);
+          }
+          if (gizmoDrag.startTransforms.length === 1) syncPropertyInputs(gizmoDrag.startTransforms[0].eid);
         }
-        if (gizmoDrag.startTransforms.length === 1) {
-            syncPropertyInputs(gizmoDrag.startTransforms[0].eid);
+      } else if (gizmoDrag.mode === 'rotate') {
+        const hitPoint = rayPlaneIntersect(ro, rd, gizmoDrag.pivot, gizmoDrag.dir);
+        if (hitPoint) {
+          const currentAngle = angleAroundAxis(vSub(hitPoint, gizmoDrag.pivot), gizmoDrag.p1, gizmoDrag.p2);
+          const deltaAngle = currentAngle - gizmoDrag.startAngle;
+          // deltaR is an elementary world-axis rotation (axis is always a
+          // unit X/Y/Z gizmo axis), so we can build it directly instead of
+          // a general Rodrigues axis-angle formula.
+          const deltaR =
+            gizmoDrag.axis === 'x' ? rotationMat3(deltaAngle * 180 / Math.PI, 0, 0) :
+            gizmoDrag.axis === 'y' ? rotationMat3(0, deltaAngle * 180 / Math.PI, 0) :
+            rotationMat3(0, 0, deltaAngle * 180 / Math.PI);
+          for (const st of gizmoDrag.startTransforms) {
+            const t = { ...st.t };
+            const R_old = rotationMat3(st.t.rx, st.t.ry, st.t.rz);
+            const R_new = mat3Mul(deltaR, R_old);
+            const euler = mat3ToEulerXYZ(R_new);
+            t.rx = euler.rx; t.ry = euler.ry; t.rz = euler.rz;
+            // Orbit this object's own pivot around the shared virtual pivot.
+            // Exact for single-selection (pivot === virtual pivot, no orbit
+            // term) and for un-rotated objects; a small approximation for
+            // multi-select rotation of already-rotated objects (documented
+            // in Fase 6.5 of the roadmap) — every plain-Euler rotate gizmo
+            // shares this limitation.
+            const rel = [st.t.px - gizmoDrag.pivot[0], st.t.py - gizmoDrag.pivot[1], st.t.pz - gizmoDrag.pivot[2]];
+            const relRotated = mat3Apply(deltaR, rel);
+            t.px = gizmoDrag.pivot[0] + relRotated[0];
+            t.py = gizmoDrag.pivot[1] + relRotated[1];
+            t.pz = gizmoDrag.pivot[2] + relRotated[2];
+            writeTransform(st.eid, t);
+            rebuildMesh(st.eid);
+          }
+          if (gizmoDrag.startTransforms.length === 1) syncPropertyInputs(gizmoDrag.startTransforms[0].eid);
+        }
+      } else if (gizmoDrag.mode === 'scale') {
+        const cp = closestParamsBetweenLines(gizmoDrag.pivot, gizmoDrag.dir, ro, rd);
+        if (cp) {
+          // Ratio of current handle distance to where the drag started —
+          // dragging away from the pivot grows the box, dragging past it
+          // shrinks/flips it. Clamped so k never collapses to <= 0.
+          const k = Math.max(0.05, cp.s / gizmoDrag.startS);
+          for (const st of gizmoDrag.startTransforms) {
+            // Scale is applied in the object's own PRE-rotation local space
+            // (ox/sx live there, same as px — see readTransform/writeTransform),
+            // so this is exact regardless of the object's rx/ry/rz: no
+            // shearing risk. Each object scales about its OWN pivot
+            // (st.t.px/py/pz), not the shared virtual pivot — a group of
+            // objects scales in place rather than fanning outward. Documented
+            // as the Fase 6.5 MVP scope in the roadmap.
+            const t = { ...st.t };
+            if (gizmoDrag.axis === 'x') { t.ox = st.t.px + (st.t.ox - st.t.px) * k; t.sx = st.t.sx * k; }
+            else if (gizmoDrag.axis === 'y') { t.oy = st.t.py + (st.t.oy - st.t.py) * k; t.sy = st.t.sy * k; }
+            else { t.oz = st.t.pz + (st.t.oz - st.t.pz) * k; t.sz = st.t.sz * k; }
+            writeTransform(st.eid, t);
+            rebuildMesh(st.eid);
+          }
+          if (gizmoDrag.startTransforms.length === 1) syncPropertyInputs(gizmoDrag.startTransforms[0].eid);
         }
       }
       lastMouse = [e.clientX, e.clientY];

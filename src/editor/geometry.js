@@ -144,6 +144,70 @@ export function gizmoArmLength() {
 }
 
 const GIZMO_HEAD_SEGMENTS = 12;
+const ROTATE_RING_SEGMENTS = 48;
+export function buildRotateGizmoGeometry(pivot) {
+  const linePos = [], lineCol = [];
+  const armLen = gizmoArmLength();
+  const radius = armLen * 0.85;
+
+  for (const ax of GIZMO_AXES) {
+    const ref = Math.abs(ax.dir[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+    const p1 = vNorm(vCross(ax.dir, ref));
+    const p2 = vCross(ax.dir, p1);
+    for (let i = 0; i < ROTATE_RING_SEGMENTS; i++) {
+      const a0 = (i / ROTATE_RING_SEGMENTS) * Math.PI * 2;
+      const a1 = ((i + 1) / ROTATE_RING_SEGMENTS) * Math.PI * 2;
+      const p0 = vAdd(pivot, vAdd(vScale(p1, Math.cos(a0) * radius), vScale(p2, Math.sin(a0) * radius)));
+      const p3 = vAdd(pivot, vAdd(vScale(p1, Math.cos(a1) * radius), vScale(p2, Math.sin(a1) * radius)));
+      linePos.push(...p0, ...p3);
+      lineCol.push(...ax.color, ...ax.color);
+    }
+  }
+  return { lineData: interleaveLine(new Float32Array(linePos), new Float32Array(lineCol)) };
+}
+
+export function buildScaleGizmoGeometry(pivot) {
+  const linePos = [], lineCol = [];
+  const triPos = [], triCol = [];
+  const armLen = gizmoArmLength();
+  const shaftEndFrac = 0.8, handleSize = armLen * 0.08;
+
+  for (const ax of GIZMO_AXES) {
+    const tip = vAdd(pivot, vScale(ax.dir, armLen * shaftEndFrac));
+    linePos.push(...pivot, ...tip);
+    lineCol.push(...ax.color, ...ax.color);
+
+    // Small cube handle centered on the tip, to visually distinguish
+    // Scale mode from Translate's cone-tipped arrows.
+    const ref = Math.abs(ax.dir[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+    const u = vNorm(vCross(ax.dir, ref));
+    const v = vCross(ax.dir, u);
+    const h = handleSize;
+    const corners = [];
+    for (const su of [-1, 1]) for (const sv of [-1, 1]) for (const sw of [-1, 1]) {
+      corners.push(vAdd(tip, vAdd(vAdd(vScale(u, su * h), vScale(v, sv * h)), vScale(ax.dir, sw * h))));
+    }
+    // corners index: su,sv,sw each in {-1,1} mapped to bit pattern (su=0/1, sv=0/1, sw=0/1) -> idx = su*4+sv*2+sw
+    const idx = (su, sv, sw) => ((su + 1) / 2) * 4 + ((sv + 1) / 2) * 2 + (sw + 1) / 2;
+    const faces = [
+      [idx(-1, -1, 1), idx(1, -1, 1), idx(1, 1, 1), idx(-1, 1, 1)],   // +axis face
+      [idx(-1, -1, -1), idx(-1, 1, -1), idx(1, 1, -1), idx(1, -1, -1)], // -axis face
+      [idx(-1, -1, -1), idx(1, -1, -1), idx(1, -1, 1), idx(-1, -1, 1)],
+      [idx(-1, 1, -1), idx(-1, 1, 1), idx(1, 1, 1), idx(1, 1, -1)],
+      [idx(-1, -1, -1), idx(-1, -1, 1), idx(-1, 1, 1), idx(-1, 1, -1)],
+      [idx(1, -1, -1), idx(1, 1, -1), idx(1, 1, 1), idx(1, -1, 1)],
+    ];
+    for (const f of faces) {
+      const [a, b, c, d] = f.map((i) => corners[i]);
+      triPos.push(...a, ...b, ...c, ...a, ...c, ...d);
+      triCol.push(...ax.color, ...ax.color, ...ax.color, ...ax.color, ...ax.color, ...ax.color);
+    }
+  }
+  return {
+    lineData: interleaveLine(new Float32Array(linePos), new Float32Array(lineCol)),
+    triData: interleaveLine(new Float32Array(triPos), new Float32Array(triCol)),
+  };
+}
 export function buildGizmoGeometry(pivot) {
   const linePos = [], lineCol = [];
   const triPos = [], triCol = [];

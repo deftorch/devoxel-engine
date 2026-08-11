@@ -3,11 +3,11 @@ import { world, growableComponent, addGrowable, Renderable, RenderMesh } from ".
 import { VoxelEngine } from "../core/index.js";
 import { Transform, ColorComp, NodeMeta, NameComp, EditorContext, getSelection, getPrimarySelection } from "./state.js";
 import History from "./history.js";
-import { buildCubeMesh, buildGridLines, interleaveLine, buildOutlineForEid, buildGizmoGeometry, gizmoArmLength, GIZMO_AXES } from "./geometry.js";
+import { buildCubeMesh, buildGridLines, interleaveLine, buildOutlineForEid, buildGizmoGeometry, buildRotateGizmoGeometry, buildScaleGizmoGeometry, gizmoArmLength, GIZMO_AXES } from "./geometry.js";
 import { uploadMesh, rebuildMesh, readTransform, writeTransform, hexToRgb01, rgb01ToHex, addCube, addGroup, deleteSelected, duplicateSelected, renameNode, commitTransform, selectNode, getVirtualPivot } from "./scene-ops.js";
 import { refreshOutliner, refreshOutlinerSelection } from "./ui/outliner.js";
 import { refreshProperties, syncPropertyInputs } from "./ui/properties.js";
-import { cameraBasis, getFovY, initCameraInput } from "./camera-input.js";
+import { cameraBasis, getFovY, initCameraInput, getGizmoMode, setGizmoMode } from "./camera-input.js";
 import { exportScene, importScene } from "./io.js";
 import { vAdd, vSub, vScale, vCross, vDot, vNorm, rotationMat3, mat3Apply, mat4Perspective, mat4LookAt, mat4Multiply } from "../core/utils/math.js?v=2";
 
@@ -126,6 +126,17 @@ $('btn-duplicate').addEventListener('click', duplicateSelected);
 $('btn-undo').addEventListener('click', () => History.undo());
 $('btn-redo').addEventListener('click', () => History.redo());
 $('btn-export').addEventListener('click', exportScene);
+
+function setGizmoModeAndSync(mode) {
+  setGizmoMode(mode);
+  for (const [id, m] of [['btn-gizmo-translate', 'translate'], ['btn-gizmo-rotate', 'rotate'], ['btn-gizmo-scale', 'scale']]) {
+    const btn = document.getElementById(id);
+    if (btn) btn.classList.toggle('gizmo-mode-active', m === mode);
+  }
+}
+$('btn-gizmo-translate').addEventListener('click', () => setGizmoModeAndSync('translate'));
+$('btn-gizmo-rotate').addEventListener('click', () => setGizmoModeAndSync('rotate'));
+$('btn-gizmo-scale').addEventListener('click', () => setGizmoModeAndSync('scale'));
 $('btn-import').addEventListener('click', () => $('file-import').click());
 $('file-import').addEventListener('change', (e) => {
   const file = e.target.files[0];
@@ -164,6 +175,12 @@ window.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.key.toLowerCase() === 'd') {
     e.preventDefault();
     duplicateSelected();
+  }
+  if (!e.ctrlKey && !e.shiftKey && !e.altKey) {
+    const key = e.key.toLowerCase();
+    if (key === 'g') setGizmoModeAndSync('translate');
+    else if (key === 'r') setGizmoModeAndSync('rotate');
+    else if (key === 's') setGizmoModeAndSync('scale');
   }
 });
 
@@ -263,9 +280,13 @@ async function main() {
 
       const virtualPivot = getVirtualPivot();
       if (virtualPivot) {
-        const gizmoGeo = buildGizmoGeometry(virtualPivot);
+        const mode = getGizmoMode();
+        const gizmoGeo =
+          mode === 'rotate' ? buildRotateGizmoGeometry(virtualPivot) :
+          mode === 'scale' ? buildScaleGizmoGeometry(virtualPivot) :
+          buildGizmoGeometry(virtualPivot);
         debugData.lines.push({ data: gizmoGeo.lineData, depthTest: false }); // X-ray
-        debugData.tris.push({ data: gizmoGeo.triData, depthTest: false });
+        if (gizmoGeo.triData) debugData.tris.push({ data: gizmoGeo.triData, depthTest: false });
       }
 
       // Kirim ke renderer
