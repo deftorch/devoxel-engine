@@ -89,13 +89,14 @@ Sebelum menyentuh arsitektur apa pun.
 
 ---
 
-## Fase 6 — Fondasi untuk Fitur Editor Kompleks Berikutnya
+## Fase 6 — Fondasi Lanjutan & Fitur Editor Kompleks (Tahap Saat Ini)
 
-Setelah Fase 1-5 selesai, `editor.js` (kini kumpulan modul) siap dipakai untuk fitur lanjutan tanpa mengulang masalah yang sama:
+Setelah Fase 1-5 selesai, `editor.js` (kini kumpulan modul) siap dipakai untuk fitur lanjutan tanpa mengulang masalah yang sama. Fase ini akan berfokus pada stabilitas UI, interaktivitas tingkat lanjut, dan ekspansi sistem *rendering*.
 
-- [ ] Dokumentasikan kontrak `drawDebugPrimitives()` sebagai _extension point_ resmi — fitur visual baru (misal: bounding box multi-select, snap guide, path/spline tool) tinggal menambah data ke kontrak ini, tidak perlu sentuh backend GPU lagi.
-- [ ] Evaluasi apakah `EditorContext` dari Fase 4 perlu naik jadi event-driven (memakai `engine.on()/emit()` yang sudah ada di `VoxelEngine`) supaya modul UI (outliner, properties) tidak saling panggil langsung.
-- [ ] Backlog fitur besar (multi-select, grouping lanjutan, snapping, material/texture editor, dll) baru dibuka setelah fondasi ini stabil — supaya fitur baru dibangun di atas struktur yang bersih, bukan di atas monolit lama.
+- [ ] **Implementasi Event-Driven `EditorContext`**: Ubah pemanggilan *hardcoded* (seperti `refreshOutliner()`) menjadi sistem Pub/Sub (*Event Emitter* / `CommandBus`). Modul UI akan "mendengarkan" (*listen*) perubahan *state*, sehingga *circular dependency* terhindarkan.
+- [ ] **Ekspansi Kontrak `drawDebugPrimitives()`**: Tingkatkan kontrak *rendering debug* agar mendukung objek 3D dinamis seperti Gizmo (Tanda Panah Transformasi), *Bounding Box* Multi-Seleksi, dan Garis Snapping. 
+- [ ] **Fitur Multi-Seleksi & Transformasi (Gizmo)**: Bangun logika di `scene-ops.js` dan `picking.js` untuk memilih beberapa objek sekaligus, serta interaksi menyeret (drag) sumbu koordinat (X, Y, Z) di *viewport* untuk memindahkan objek.
+- [ ] **Arsitektur "Dual-Mode Renderer" (Opsional/Riset)**: Rancang abstraksi untuk memungkinkan *hot-swapping* ke renderer tingkat tinggi (seperti Babylon.js atau Three.js) sebagai *plugin* opsional untuk mode "Editor Produktivitas", sementara *raw* WebGPU dipertahankan sebagai mode "Purist/Performa Ekstrem".
 
 ---
 
