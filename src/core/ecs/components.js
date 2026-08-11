@@ -69,6 +69,9 @@ observe(world, onRemove(RenderMesh), (eid) => {
  */
 export const VoxelVolume = { volume: [] };
 
+// Tag component untuk melacak entity mana saja yang sedang dipilih
+export const Selected = {};
+
 // Automatically free the entity's brick pool slots (freeChunkVolume) when the component is removed
 observe(world, onRemove(VoxelVolume), (eid) => {
   VoxelVolume.volume[eid]?.destroy();

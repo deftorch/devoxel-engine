@@ -1,5 +1,5 @@
-import { observe, onRemove } from "bitecs";
-import { world, growableComponent } from "../core/ecs/components.js";
+import { observe, onRemove, query, addComponent, removeComponent, hasComponent } from "bitecs";
+import { world, growableComponent, Selected } from "../core/ecs/components.js";
 
 // origin = sudut "from" kubus, size = lebar/tinggi/dalam, pivot = titik
 // rotasi (biasanya tengah kubus), rotation = euler derajat.
@@ -35,9 +35,37 @@ observe(world, onRemove(NameComp), (eid) => {
 export const EditorContext = {
   engineRef: null,
   sceneOrder: [],
-  selectedEid: -1,
   camera: { target: [0, 3, 0], yaw: 0.9, pitch: -0.5, distance: 26 },
   refreshOutliner: () => {},
   refreshProperties: () => {},
   refreshOutlinerSelection: () => {},
 };
+
+export const getSelection = () => query(world, [Selected]);
+
+export const getPrimarySelection = () => {
+  const sel = getSelection();
+  return sel.length > 0 ? sel[0] : -1;
+};
+
+export const clearSelection = () => {
+  for (const eid of getSelection()) removeComponent(world, eid, Selected);
+};
+
+export const setSelection = (eids) => {
+  clearSelection();
+  for (const eid of eids) addComponent(world, eid, Selected);
+};
+
+export const toggleSelection = (eid) => {
+  if (hasComponent(world, eid, Selected)) removeComponent(world, eid, Selected);
+  else addComponent(world, eid, Selected);
+};
+
+Object.defineProperty(EditorContext, 'selectedEid', {
+  get: function() { return getPrimarySelection(); },
+  set: function(val) {
+    if (val === -1) clearSelection();
+    else setSelection([val]);
+  }
+});

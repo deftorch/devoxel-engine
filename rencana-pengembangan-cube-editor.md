@@ -104,10 +104,10 @@ Setelah Fase 1-5 selesai, `editor.js` (kini kumpulan modul) siap dipakai untuk f
 
 **Tujuan:** memindahkan status seleksi dari scalar `EditorContext.selectedEid` menjadi komponen ECS yang query-able, agar siap menampung multi-seleksi tanpa struktur data paralel.
 
-- [ ] Tambahkan `export const Selected = {}` (tag/marker component kosong) di `src/core/ecs/components.js`.
-- [ ] Tambahkan helper di `state.js`/modul baru kecil: `getSelection()` (balikin array eid dari `query(world, [Selected])`), `getPrimarySelection()` (balikin eid pertama/terakhir untuk kasus yang masih butuh 1 eid, misalnya field input Properties saat seleksi tunggal), `setSelection(eids)`, `clearSelection()`.
-- [ ] Pastikan entity yang dihapus otomatis lepas dari `Selected` (bitECS sudah menangani ini otomatis lewat `removeEntity`, cukup diverifikasi lewat test).
-- [ ] **Checkpoint:** belum ada perubahan perilaku yang terlihat di UI — ini murni pergantian struktur data internal.
+- [x] Tambahkan `export const Selected = {}` (tag/marker component kosong) di `src/core/ecs/components.js`.
+- [x] Tambahkan helper di `state.js`/modul baru kecil: `getSelection()` (balikin array eid dari `query(world, [Selected])`), `getPrimarySelection()` (balikin eid pertama/terakhir untuk kasus yang masih butuh 1 eid, misalnya field input Properties saat seleksi tunggal), `setSelection(eids)`, `clearSelection()`.
+- [x] Pastikan entity yang dihapus otomatis lepas dari `Selected` (bitECS sudah menangani ini otomatis lewat `removeEntity`, cukup diverifikasi lewat test).
+- [x] **Checkpoint:** belum ada perubahan perilaku yang terlihat di UI — ini murni pergantian struktur data internal.
 
 ### 6.2 — Migrasi Titik Pemakai `selectedEid` Lama
 
