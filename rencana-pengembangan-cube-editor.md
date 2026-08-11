@@ -93,10 +93,91 @@ Sebelum menyentuh arsitektur apa pun.
 
 Setelah Fase 1-5 selesai, `editor.js` (kini kumpulan modul) siap dipakai untuk fitur lanjutan tanpa mengulang masalah yang sama. Fase ini akan berfokus pada stabilitas UI, interaktivitas tingkat lanjut, dan ekspansi sistem *rendering*.
 
-- [ ] **Implementasi Event-Driven `EditorContext`**: Ubah pemanggilan *hardcoded* (seperti `refreshOutliner()`) menjadi sistem Pub/Sub (*Event Emitter* / `CommandBus`). Modul UI akan "mendengarkan" (*listen*) perubahan *state*, sehingga *circular dependency* terhindarkan.
-- [ ] **Ekspansi Kontrak `drawDebugPrimitives()`**: Tingkatkan kontrak *rendering debug* agar mendukung objek 3D dinamis seperti Gizmo (Tanda Panah Transformasi), *Bounding Box* Multi-Seleksi, dan Garis Snapping. 
-- [ ] **Fitur Multi-Seleksi & Transformasi (Gizmo)**: Bangun logika di `scene-ops.js` dan `picking.js` untuk memilih beberapa objek sekaligus, serta interaksi menyeret (drag) sumbu koordinat (X, Y, Z) di *viewport* untuk memindahkan objek.
-- [ ] **Arsitektur "Dual-Mode Renderer" (Opsional/Riset)**: Rancang abstraksi untuk memungkinkan *hot-swapping* ke renderer tingkat tinggi (seperti Babylon.js atau Three.js) sebagai *plugin* opsional untuk mode "Editor Produktivitas", sementara *raw* WebGPU dipertahankan sebagai mode "Purist/Performa Ekstrem".
+> **Catatan audit (sebelum menulis kode):** sebagian isi Fase 6 versi awal ternyata sudah terselesaikan sebagian oleh Fase 1-5 tanpa disadari, dan sebagian lagi butuh diriset ulang karena asumsi awalnya kurang tepat untuk arsitektur ECS proyek ini (bitECS, tanpa scene graph). Poin-poin di bawah sudah direvisi berdasarkan audit kode aktual + riset eksternal (pola Three.js `TransformControls`, kapabilitas `bitecs@0.4.0`, desain `History.js` yang sudah ada).
+>
+> - Gizmo **translate** untuk single-selection **sudah berjalan penuh** (`geometry.js: buildGizmoGeometry`, `camera-input.js: pickGizmoAxis/gizmoDrag/closestParamsBetweenLines`, `scene-ops.js: commitTransform`). Sisa pekerjaan Fase 6 di area ini murni **multi-seleksi** dan **rotate/scale**, bukan gizmo dari nol.
+> - "Circular dependency" yang disebut sebagai alasan Pub/Sub sebenarnya **sudah diputus** sejak Fase 4 lewat pola callback-injection (`EditorContext.refreshOutliner = () => refreshOutliner()`). Motivasi Pub/Sub direvisi jadi: mengurangi boilerplate (8+ titik pemanggilan manual di `scene-ops.js`) dan mendukung >1 listener per event, bukan memperbaiki sirkularitas yang sudah tidak ada.
+> - `History.js` (command pattern berbasis closure `redo()`/`undo()`) **sudah cukup** untuk batch/macro command multi-objek tanpa kelas abstraksi baru — cukup loop di dalam satu closure.
+> - `bitecs@0.4.0` (versi yang dipakai proyek ini, lihat `package.json` / `scripts/check-bitecs-version.js`) mendukung tag/marker component + `query()`, sehingga state seleksi sebaiknya hidup di ECS (konsisten dengan pola `observe(world, onRemove(...))` yang sudah dipakai untuk `RenderMesh`/`VoxelVolume`), bukan sebagai array terpisah di `EditorContext`.
+
+### 6.1 — `Selected` Tag Component (fondasi data seleksi)
+
+**Tujuan:** memindahkan status seleksi dari scalar `EditorContext.selectedEid` menjadi komponen ECS yang query-able, agar siap menampung multi-seleksi tanpa struktur data paralel.
+
+- [ ] Tambahkan `export const Selected = {}` (tag/marker component kosong) di `src/core/ecs/components.js`.
+- [ ] Tambahkan helper di `state.js`/modul baru kecil: `getSelection()` (balikin array eid dari `query(world, [Selected])`), `getPrimarySelection()` (balikin eid pertama/terakhir untuk kasus yang masih butuh 1 eid, misalnya field input Properties saat seleksi tunggal), `setSelection(eids)`, `clearSelection()`.
+- [ ] Pastikan entity yang dihapus otomatis lepas dari `Selected` (bitECS sudah menangani ini otomatis lewat `removeEntity`, cukup diverifikasi lewat test).
+- [ ] **Checkpoint:** belum ada perubahan perilaku yang terlihat di UI — ini murni pergantian struktur data internal.
+
+### 6.2 — Migrasi Titik Pemakai `selectedEid` Lama
+
+**Tujuan:** semua kode yang membaca `EditorContext.selectedEid` (± 24 lokasi) beralih ke `Selected`/`getSelection()` tanpa regresi pada alur single-select yang sudah berjalan.
+
+File yang terdampak (urutan pengerjaan disarankan satu-per-satu + jalankan aplikasi setelah tiap file, bukan sekaligus):
+
+- [ ] `src/editor/scene-ops.js` — `selectNode`, `addCube`, `addGroup`, `deleteSelected`, `duplicateSelected`.
+- [ ] `src/editor/picking.js` — `pickAtScreen` (hasil klik tunggal → `setSelection([eid])`, atau tambah ke seleksi jika modifier Shift ditekan).
+- [ ] `src/editor/camera-input.js` — `pickGizmoAxis`, alur `gizmoDrag` (lihat 6.4 untuk detail pivot multi-select).
+- [ ] `src/editor/editor.js` — shortcut `Delete`/`Backspace`, alur `drawDebugPrimitives` untuk outline & gizmo.
+- [ ] `src/editor/ui/outliner.js` — highlight baris terpilih (harus mendukung multi-highlight).
+- [ ] `src/editor/ui/properties.js` — mode tampilan saat seleksi > 1 objek (lihat catatan "Mixed value" di 6.3).
+- [ ] **Checkpoint:** semua fitur lama (single select, translate gizmo, delete, duplicate, undo/redo) harus identik perilakunya dengan sebelum migrasi. Jalankan `npm run test` + smoke test manual dari Fase 0.
+
+### 6.3 — Marquee Select (Drag Rectangle Multi-Seleksi)
+
+**Tujuan:** memilih banyak objek sekaligus lewat drag rectangle di viewport, sebagai pelengkap klik tunggal yang sudah ada.
+
+- [ ] Deteksi drag di area viewport kosong (bukan di atas gizmo/objek) → mulai mode `marquee` di `camera-input.js`.
+- [ ] Proyeksikan bounding-box tiap entity (dari `Transform`) ke screen space menggunakan matriks view-projection yang sudah tersedia di `camera-input.js`/`picking.js`; entity yang overlap dengan rectangle drag → masuk seleksi.
+- [ ] Dukung modifier: `Shift` = tambah ke seleksi berjalan, tanpa modifier = ganti seleksi.
+- [ ] Update `outliner.js` agar bisa menyorot banyak baris sekaligus, dan `properties.js` agar menampilkan mode **"Mixed"** pada field yang nilainya berbeda antar objek terpilih (versi awal: read-only saat mixed, belum perlu edit-multi-value).
+- [ ] **Checkpoint:** drag-select di area kosong menghasilkan seleksi yang benar secara visual (outline muncul di semua objek terpilih), klik tunggal dan Delete/Duplicate tetap bekerja terhadap seluruh seleksi (bukan cuma 1 objek).
+
+### 6.4 — Virtual Pivot + Gizmo Translate untuk Multi-Seleksi
+
+**Tujuan:** menggerakkan banyak objek terpilih sekaligus lewat satu gizmo, mengadaptasi pola industri (Three.js `TransformControls` memakai grup sementara + pivot di titik tengah objek terpilih) ke arsitektur ECS flat proyek ini — tanpa parenting/scene graph literal.
+
+- [ ] Hitung `virtualPivot = {x,y,z}` dari rata-rata posisi pivot seluruh entity di `Selected` (bukan entity sungguhan, cukup nilai sementara per-frame).
+- [ ] Gambar & drag gizmo relatif ke `virtualPivot` — reuse penuh `pickGizmoAxis()` dan `closestParamsBetweenLines()` yang sudah ada, cuma sumber titik pivotnya diganti dari `Transform[selectedEid]` menjadi `virtualPivot`.
+- [ ] Saat drag berlangsung, delta pergerakan diterapkan ke transform **setiap** entity di `Selected` secara paralel (bukan reparenting).
+- [ ] Bungkus hasil akhir drag jadi **satu** `History.push()` (macro command via closure loop — lihat catatan audit di atas, tidak perlu kelas `MacroCommand` baru):
+  ```js
+  History.push({
+    label: 'Move Selection',
+    redo() { for (const eid of selected) { writeTransform(eid, newT[eid]); rebuildMesh(eid); } },
+    undo() { for (const eid of selected) { writeTransform(eid, oldT[eid]); rebuildMesh(eid); } },
+  });
+  ```
+- [ ] **Checkpoint:** drag translate pada 2+ objek terpilih memindahkan semuanya secara konsisten, dan 1x undo membatalkan seluruh pergerakan grup (bukan per-objek).
+
+### 6.5 — Rotate & Scale Gizmo
+
+**Tujuan:** melengkapi gizmo translate yang sudah ada dengan mode rotate dan scale, untuk single maupun multi-seleksi (reuse `virtualPivot` dari 6.4).
+
+- [ ] Tambah geometri gizmo rotate (ring per sumbu) dan scale (kubus kecil di ujung arm) di `geometry.js`, mengikuti pola `buildGizmoGeometry()`/`GIZMO_AXES` yang sudah ada.
+- [ ] Math rotasi: proyeksi drag mouse ke sudut rotasi terhadap `virtualPivot` (trackball atau per-sumbu, mulai dari per-sumbu dulu karena lebih sederhana), lalu update `Transform.rx/ry/rz`.
+- [ ] Math scale: drag sepanjang arm mengubah `Transform.sx/sy/sz` relatif terhadap `virtualPivot`.
+- [ ] Tambah UI toggle mode gizmo (Translate/Rotate/Scale), mirip pola hotkey Blender (`G`/`R`/`S`) jika ingin konsisten dengan software 3D standar.
+- [ ] **Checkpoint:** rotate & scale bekerja untuk single dan multi-seleksi, undo/redo tetap 1 langkah per aksi drag.
+
+### 6.6 — Event-Driven `EditorContext` (Pub/Sub)
+
+**Tujuan:** mengurangi boilerplate pemanggilan manual (`EditorContext.refreshOutliner()` dkk. di 8+ lokasi) dan mendukung lebih dari satu listener per event — dikerjakan **bersamaan** dengan 6.1-6.4 karena titik-titik pemanggilan itu toh akan berubah saat multi-select masuk, bukan sebagai langkah terpisah di awal.
+
+- [ ] Buat event emitter kecil (bisa manual atau reuse pola `CommandBus.js` yang sudah ada sebagai referensi API) yang dipasang di `EditorContext`: `on(event, handler)`, `emit(event, payload)`.
+- [ ] Event minimal yang dibutuhkan: `selectionChanged`, `sceneMutated` (add/remove/rename node), `transformChanged`.
+- [ ] Ganti pemanggilan langsung `EditorContext.refreshOutliner()`/`refreshProperties()`/`refreshOutlinerSelection()` di `scene-ops.js`, `camera-input.js`, `io.js` menjadi `EditorContext.emit('sceneMutated')` dkk.
+- [ ] `outliner.js` dan `properties.js` mendaftarkan diri sebagai listener saat inisialisasi, alih-alih diwire manual satu-satu di `editor.js`.
+- [ ] **Checkpoint:** perilaku UI tidak berubah dari sisi pengguna, tapi menambah listener baru (misal panel statistik baru di masa depan) tidak lagi butuh mengubah `scene-ops.js`.
+
+### 6.7 — Riset Dual-Mode Renderer / Babylon.js (Opsional, Spike Saja)
+
+**Tujuan:** dieksplorasi paling akhir, setelah 6.1-6.6 selesai, dan **tanpa komitmen integrasi penuh** di iterasi ini.
+
+- [ ] `PluginRegistry.registerRenderer()` sudah generic dan mendukung ini tanpa menyentuh WebGPU/WebGL yang ada — validasi ini lewat prototipe kecil (bukan integrasi produksi).
+- [ ] Perhatikan biaya nyata sebelum lanjut: (a) ukuran dependency Babylon.js yang signifikan untuk fitur opsional, (b) `createMesh(vertexData, indexData)` perlu adapter untuk membungkus jadi `BABYLON.VertexData` per mesh, perlu divalidasi layout vertex (posisi/normal/UV/warna) cocok 1:1.
+- [ ] Sebelum menulis kode integrasi, evaluasi ulang: apakah kebutuhan sebenarnya (Gizmo + `UtilityLayerRenderer` bawaan Babylon) sudah cukup terjawab oleh gizmo custom hasil 6.4-6.5 — jika ya, turunkan prioritas poin ini lebih jauh lagi.
+- [ ] **Checkpoint:** cukup berupa catatan riset/prototipe terpisah (mis. `sandbox.html` atau branch eksperimen), tidak mem-block rilis fitur 6.1-6.6.
 
 ---
 
@@ -104,4 +185,4 @@ Setelah Fase 1-5 selesai, `editor.js` (kini kumpulan modul) siap dipakai untuk f
 
 1. **Fase 1-3 = wajib, tidak bisa ditunda** — ini yang menyelesaikan bug WebGL fallback secara benar (lewat abstraksi), bukan tambal sulam.
 2. **Fase 4-5 = sangat direkomendasikan sebelum menambah fitur baru** — biaya refactor makin mahal kalau ditunda sampai `editor.js` makin gemuk.
-3. **Fase 6 = pintu masuk untuk roadmap fitur** — mulai setelah fondasi di atas beres.
+3. **Fase 6 = pintu masuk untuk roadmap fitur** — mulai setelah fondasi di atas beres. Urutan internal Fase 6: **6.1 → 6.2 → 6.3 → 6.4 → 6.5**, wajib berurutan karena masing-masing bergantung pada fondasi data (`Selected` tag component) dari langkah sebelumnya. **6.6** dikerjakan menyatu dengan 6.1-6.4, bukan langkah terpisah. **6.7** paling akhir dan bersifat opsional/spike, tidak boleh memblokir 6.1-6.6.
