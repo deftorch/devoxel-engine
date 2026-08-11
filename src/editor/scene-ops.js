@@ -99,9 +99,13 @@ export function destroyNodeRaw(eid) {
   removeEntity(world, eid);
 }
 
-export function selectNode(eid) {
-  if (eid < 0) clearSelection();
-  else setSelection([eid]);
+export function selectNode(eid, shiftKey = false) {
+  if (shiftKey && eid >= 0) {
+    toggleSelection(eid);
+  } else {
+    if (eid < 0) clearSelection();
+    else setSelection([eid]);
+  }
 
   const primaryEid = getPrimarySelection();
   const btnDelete = document.getElementById('btn-delete');
