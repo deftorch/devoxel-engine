@@ -3,7 +3,7 @@ import { EditorContext, NodeMeta, Transform } from "./state.js";
 import { readTransform, selectNode } from "./scene-ops.js";
 import { screenToRay } from "./camera-input.js";
 
-export function pickAtScreen(clientX, clientY, canvas) {
+export function pickAtScreen(clientX, clientY, canvas, shiftKey = false) {
   const { ro, rd } = screenToRay(clientX, clientY, canvas);
   let bestT = Infinity,
     bestEid = -1;
@@ -21,7 +21,7 @@ export function pickAtScreen(clientX, clientY, canvas) {
       bestEid = eid;
     }
   }
-  selectNode(bestEid);
+  selectNode(bestEid, shiftKey);
 }
 
 export function rayAABB(ro, rd, mn, mx) {

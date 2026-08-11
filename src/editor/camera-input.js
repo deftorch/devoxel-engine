@@ -1,5 +1,5 @@
 import { vAdd, vSub, vScale, vCross, vNorm, vDot } from "../core/utils/math.js?v=2";
-import { EditorContext, Transform, NodeMeta } from "./state.js";
+import { EditorContext, Transform, NodeMeta, getPrimarySelection } from "./state.js";
 import { readTransform, writeTransform, commitTransform, rebuildMesh } from "./scene-ops.js";
 import { syncPropertyInputs } from "./ui/properties.js";
 import { GIZMO_AXES, gizmoArmLength } from "./geometry.js";
@@ -46,9 +46,10 @@ export function closestParamsBetweenLines(p0, d1, ro, d2) {
 }
 
 function pickGizmoAxis(clientX, clientY, canvas) {
-  if (EditorContext.selectedEid < 0 || NodeMeta.isGroup[EditorContext.selectedEid]) return null;
+  const primaryEid = getPrimarySelection();
+  if (primaryEid < 0 || NodeMeta.isGroup[primaryEid]) return null;
   const { ro, rd } = screenToRay(clientX, clientY, canvas);
-  const pivot = [Transform.px[EditorContext.selectedEid], Transform.py[EditorContext.selectedEid], Transform.pz[EditorContext.selectedEid]];
+  const pivot = [Transform.px[primaryEid], Transform.py[primaryEid], Transform.pz[primaryEid]];
   const armLen = gizmoArmLength();
   const threshold = armLen * 0.16;
   let best = null;
@@ -73,10 +74,11 @@ export function initCameraInput(canvas) {
   canvas.addEventListener('mousedown', (e) => {
     mouseDownPos = [e.clientX, e.clientY];
     lastMouse = [e.clientX, e.clientY];
+    const primaryEid = getPrimarySelection();
     const hit = e.button === 0 ? pickGizmoAxis(e.clientX, e.clientY, canvas) : null;
-    if (hit) {
+    if (hit && primaryEid >= 0) {
       inputMode = 'gizmo';
-      gizmoDrag = { axis: hit.axis, dir: hit.dir, startS: hit.s, startT: readTransform(EditorContext.selectedEid) };
+      gizmoDrag = { axis: hit.axis, dir: hit.dir, startS: hit.s, startT: readTransform(primaryEid), eid: primaryEid };
     } else {
       inputMode = e.button === 2 ? 'pan' : 'orbit';
     }
@@ -86,17 +88,17 @@ export function initCameraInput(canvas) {
   window.addEventListener('mouseup', (e) => {
     const moved = Math.hypot(e.clientX - mouseDownPos[0], e.clientY - mouseDownPos[1]);
     if (inputMode === 'gizmo' && gizmoDrag) {
-      const newT = readTransform(EditorContext.selectedEid);
+      const newT = readTransform(gizmoDrag.eid);
       if (moved > 1)
-        commitTransform(EditorContext.selectedEid, gizmoDrag.startT, newT);
+        commitTransform(gizmoDrag.eid, gizmoDrag.startT, newT);
       else {
-        writeTransform(EditorContext.selectedEid, gizmoDrag.startT);
-        rebuildMesh(EditorContext.selectedEid);
+        writeTransform(gizmoDrag.eid, gizmoDrag.startT);
+        rebuildMesh(gizmoDrag.eid);
         EditorContext.refreshProperties();
       }
       gizmoDrag = null;
     } else if (moved < 4 && e.button === 0) {
-      pickAtScreen(e.clientX, e.clientY, canvas);
+      pickAtScreen(e.clientX, e.clientY, canvas, e.shiftKey);
     }
     inputMode = null;
     canvas.classList.remove('dragging');
@@ -118,9 +120,9 @@ export function initCameraInput(canvas) {
         t.px += gizmoDrag.dir[0] * delta;
         t.py += gizmoDrag.dir[1] * delta;
         t.pz += gizmoDrag.dir[2] * delta;
-        writeTransform(EditorContext.selectedEid, t);
-        rebuildMesh(EditorContext.selectedEid);
-        syncPropertyInputs(EditorContext.selectedEid);
+        writeTransform(gizmoDrag.eid, t);
+        rebuildMesh(gizmoDrag.eid);
+        syncPropertyInputs(gizmoDrag.eid);
       }
       lastMouse = [e.clientX, e.clientY];
       return;
