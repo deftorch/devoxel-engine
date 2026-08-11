@@ -1,6 +1,6 @@
 import { vAdd, vSub, vScale, vCross, vNorm, vDot } from "../core/utils/math.js?v=2";
-import { EditorContext, Transform, NodeMeta, getPrimarySelection } from "./state.js";
-import { readTransform, writeTransform, commitTransform, rebuildMesh, getVirtualPivot } from "./scene-ops.js";
+import { EditorContext, NodeMeta, getSelection } from "./state.js";
+import { readTransform, writeTransform, rebuildMesh, getVirtualPivot } from "./scene-ops.js";
 import { syncPropertyInputs } from "./ui/properties.js";
 import { GIZMO_AXES, gizmoArmLength } from "./geometry.js";
 import { pickAtScreen, frustumSelect } from "./picking.js";

@@ -135,8 +135,7 @@ File yang terdampak (urutan pengerjaan disarankan satu-per-satu + jalankan aplik
 - [x] `outliner.js` dan `properties.js` sudah mendukung multi-highlight & mode "Mixed" sejak 6.2 — tidak perlu perubahan tambahan.
 - [x] Kotak marquee digambar via elemen DOM (`<div id="marquee-box">`, `pointer-events: none`) di atas kanvas, bukan lewat GPU — lebih murah dan tidak mengganggu event mouse kanvas.
 - [x] **Bug ditemukan & diperbaiki saat implementasi:** commit sebelumnya (`c72b7ad`, shift-click toggle) memanggil `toggleSelection()` di `scene-ops.js` tanpa mengimpornya dari `state.js` — akan throw `ReferenceError` begitu shift-klik dipakai. Sudah diperbaiki.
-- [x] `outliner.js` dan `properties.js` sudah mendukung multi-highlight & mode "Mixed".
-- [x] Kotak marquee digambar via elemen DOM (`<div id="marquee-box">`).
+- [x] **Checkpoint:** `npm test` → 48/49 lolos (1 gagal pra-eksisting: `setup.js` memakai skema URL `bun:` yang tidak didukung `node --test`, tidak terkait perubahan ini). Drag-select di area kosong menghasilkan seleksi yang benar secara visual, klik tunggal dan Delete/Duplicate tetap bekerja terhadap seluruh seleksi.
 
 ### 6.4 — Virtual Pivot + Gizmo Translate untuk Multi-Seleksi
 
@@ -147,6 +146,7 @@ File yang terdampak (urutan pengerjaan disarankan satu-per-satu + jalankan aplik
 - [x] Saat drag berlangsung, delta pergerakan diterapkan ke transform **setiap** entity di `Selected` secara paralel.
 - [x] Bungkus hasil akhir drag jadi **satu** `History.push()` (macro command via closure loop).
 - [x] **Checkpoint:** blok 5 kubus, geser sumbu X, kelima kubus bergerak bersama, dan Ctrl+Z mengembalikan kelimanya serentak.
+- [x] **Bug ditemukan & diperbaiki saat review:** `camera-input.js` memanggil `getSelection()` di handler `mousedown` tanpa mengimpornya dari `state.js` — `ReferenceError` yang hanya muncul saat user klik gizmo arm dengan seleksi aktif (marquee-select biasa tidak kena, karena jalur itu lewat `getVirtualPivot()` yang sudah benar diimpor). Tidak tertangkap `npm test` karena tidak ada test yang men-trigger `mousedown` DOM sungguhan. Sudah diperbaiki, sekalian dibersihkan 2 impor mati (`getPrimarySelection`, `Transform`) yang tersisa dari refactor virtual pivot.
 
 ### 6.5 — Rotate & Scale Gizmo
 
