@@ -173,7 +173,17 @@ window.addEventListener('keydown', (e) => {
 async function main() {
   initCameraInput(canvas);
   setStatus('Mendeteksi GPU...', 0);
-  let targetRenderer = navigator.gpu ? 'webgpu' : 'webgl';
+  const urlParams = new URLSearchParams(window.location.search);
+  let targetRenderer = urlParams.get('renderer') || (navigator.gpu ? 'webgpu' : 'webgl');
+
+  const rendererSelect = document.getElementById('renderer-select');
+  if (rendererSelect) {
+    rendererSelect.value = targetRenderer;
+    rendererSelect.addEventListener('change', (e) => {
+      urlParams.set('renderer', e.target.value);
+      window.location.search = urlParams.toString();
+    });
+  }
 
   try {
     setStatus(`Menginisialisasi ${targetRenderer.toUpperCase()}...`, 0);
