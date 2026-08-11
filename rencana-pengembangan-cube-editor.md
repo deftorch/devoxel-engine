@@ -127,11 +127,15 @@ File yang terdampak (urutan pengerjaan disarankan satu-per-satu + jalankan aplik
 
 **Tujuan:** memilih banyak objek sekaligus lewat drag rectangle di viewport, sebagai pelengkap klik tunggal yang sudah ada.
 
-- [ ] Deteksi drag di area viewport kosong (bukan di atas gizmo/objek) → mulai mode `marquee` di `camera-input.js`.
-- [ ] Proyeksikan bounding-box tiap entity (dari `Transform`) ke screen space menggunakan matriks view-projection yang sudah tersedia di `camera-input.js`/`picking.js`; entity yang overlap dengan rectangle drag → masuk seleksi.
-- [ ] Dukung modifier: `Shift` = tambah ke seleksi berjalan, tanpa modifier = ganti seleksi.
-- [ ] Update `outliner.js` agar bisa menyorot banyak baris sekaligus, dan `properties.js` agar menampilkan mode **"Mixed"** pada field yang nilainya berbeda antar objek terpilih (versi awal: read-only saat mixed, belum perlu edit-multi-value).
-- [ ] **Checkpoint:** drag-select di area kosong menghasilkan seleksi yang benar secara visual (outline muncul di semua objek terpilih), klik tunggal dan Delete/Duplicate tetap bekerja terhadap seluruh seleksi (bukan cuma 1 objek).
+> **Perubahan skema input kamera (disengaja, bukan regresi):** Left-drag di area kosong sebelumnya dipakai untuk Orbit. Karena Left-button sekarang didedikasikan penuh untuk interaksi editor (klik pilih, marquee select, gizmo drag), Orbit dipindah ke **Middle-drag**, Pan tetap di **Right-drag**. Klik kiri tanpa drag berarti (di bawah `MARQUEE_THRESHOLD = 4px`) tetap berperilaku seperti klik biasa. Hint toolbar sudah diperbarui.
+
+- [x] Deteksi drag di area viewport kosong (bukan di atas gizmo/objek) → mulai mode `marquee` di `camera-input.js`. Disambiguasi klik-vs-drag memakai threshold 4px yang sama dengan pola gizmo/pick yang sudah ada sebelumnya.
+- [x] Proyeksikan bounding-box tiap entity (8 sudut OBB, bukan cuma titik pusat, untuk akurasi terhadap objek yang dirotasi) ke screen space. Ditambahkan primitif baru `mat4Apply()`/`projectToScreen()` di `math.js` (sebelumnya proyek ini murni ray-based picking, belum ada proyeksi titik 3D→2D) dengan guard `w <= epsilon` untuk titik di belakang kamera. `frustumSelect()` baru ditambahkan di `picking.js`, memakai view/proj matrix yang identik dengan yang dipakai renderer WebGL/WebGPU (fovY=PI/3, near=0.1, far=500) agar hasil seleksi sesuai apa yang terlihat di layar.
+- [x] Dukung modifier: `Shift` = tambah ke seleksi berjalan, tanpa modifier = ganti seleksi.
+- [x] `outliner.js` dan `properties.js` sudah mendukung multi-highlight & mode "Mixed" sejak 6.2 — tidak perlu perubahan tambahan.
+- [x] Kotak marquee digambar via elemen DOM (`<div id="marquee-box">`, `pointer-events: none`) di atas kanvas, bukan lewat GPU — lebih murah dan tidak mengganggu event mouse kanvas.
+- [x] **Bug ditemukan & diperbaiki saat implementasi:** commit sebelumnya (`c72b7ad`, shift-click toggle) memanggil `toggleSelection()` di `scene-ops.js` tanpa mengimpornya dari `state.js` — akan throw `ReferenceError` begitu shift-klik dipakai. Sudah diperbaiki.
+- [x] **Checkpoint:** `npm test` → 48/49 lolos (1 gagal pra-eksisting: `setup.js` memakai skema URL `bun:` yang tidak didukung `node --test`, tidak terkait perubahan ini — dikonfirmasi lewat `git stash` bahwa kegagalan yang sama terjadi sebelum perubahan 6.3). Drag-select di area kosong menghasilkan seleksi yang benar secara visual, klik tunggal dan Delete/Duplicate tetap bekerja terhadap seluruh seleksi.
 
 ### 6.4 — Virtual Pivot + Gizmo Translate untuk Multi-Seleksi
 

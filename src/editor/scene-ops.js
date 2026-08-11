@@ -1,6 +1,6 @@
 import { addEntity, removeEntity, addComponent } from "bitecs";
 import { world, addGrowable, Renderable, RenderMesh } from "../core/ecs/components.js";
-import { Transform, ColorComp, NodeMeta, NameComp, EditorContext, getSelection, getPrimarySelection, setSelection, clearSelection } from "./state.js";
+import { Transform, ColorComp, NodeMeta, NameComp, EditorContext, getSelection, getPrimarySelection, setSelection, clearSelection, toggleSelection } from "./state.js";
 import History from "./history.js";
 import { buildCubeMesh } from "./geometry.js";
 

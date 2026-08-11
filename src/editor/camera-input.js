@@ -3,7 +3,7 @@ import { EditorContext, Transform, NodeMeta, getPrimarySelection } from "./state
 import { readTransform, writeTransform, commitTransform, rebuildMesh } from "./scene-ops.js";
 import { syncPropertyInputs } from "./ui/properties.js";
 import { GIZMO_AXES, gizmoArmLength } from "./geometry.js";
-import { pickAtScreen } from "./picking.js";
+import { pickAtScreen, frustumSelect } from "./picking.js";
 
 export function cameraBasis() {
   const cp = Math.cos(EditorContext.camera.pitch),
@@ -65,22 +65,66 @@ function pickGizmoAxis(clientX, clientY, canvas) {
   return best;
 }
 
+const MARQUEE_THRESHOLD = 4; // px — below this, a left-button interaction is treated as a click, not a drag
+
+function getMarqueeBox() {
+  return document.getElementById('marquee-box');
+}
+
+function showMarquee(x, y) {
+  const box = getMarqueeBox();
+  if (!box) return;
+  box.style.display = 'block';
+  box.style.left = x + 'px';
+  box.style.top = y + 'px';
+  box.style.width = '0px';
+  box.style.height = '0px';
+}
+
+function updateMarquee(x0, y0, x1, y1) {
+  const box = getMarqueeBox();
+  if (!box) return;
+  const left = Math.min(x0, x1), top = Math.min(y0, y1);
+  box.style.left = left + 'px';
+  box.style.top = top + 'px';
+  box.style.width = Math.abs(x1 - x0) + 'px';
+  box.style.height = Math.abs(y1 - y0) + 'px';
+}
+
+function hideMarquee() {
+  const box = getMarqueeBox();
+  if (box) box.style.display = 'none';
+}
+
 export function initCameraInput(canvas) {
-  let inputMode = null; // 'orbit' | 'pan' | 'gizmo' | null
+  let inputMode = null; // 'orbit' | 'pan' | 'gizmo' | 'marquee' | null
   let lastMouse = [0, 0];
   let mouseDownPos = [0, 0];
+  let mouseDownCanvasPos = [0, 0]; // clientX/Y minus canvas rect, for marquee rect math
   let gizmoDrag = null; // { axis, dir, startS, startT }
 
   canvas.addEventListener('mousedown', (e) => {
     mouseDownPos = [e.clientX, e.clientY];
     lastMouse = [e.clientX, e.clientY];
-    const primaryEid = getPrimarySelection();
-    const hit = e.button === 0 ? pickGizmoAxis(e.clientX, e.clientY, canvas) : null;
-    if (hit && primaryEid >= 0) {
-      inputMode = 'gizmo';
-      gizmoDrag = { axis: hit.axis, dir: hit.dir, startS: hit.s, startT: readTransform(primaryEid), eid: primaryEid };
-    } else {
-      inputMode = e.button === 2 ? 'pan' : 'orbit';
+    const rect = canvas.getBoundingClientRect();
+    mouseDownCanvasPos = [e.clientX - rect.left, e.clientY - rect.top];
+
+    if (e.button === 0) {
+      const primaryEid = getPrimarySelection();
+      const hit = pickGizmoAxis(e.clientX, e.clientY, canvas);
+      if (hit && primaryEid >= 0) {
+        inputMode = 'gizmo';
+        gizmoDrag = { axis: hit.axis, dir: hit.dir, startS: hit.s, startT: readTransform(primaryEid), eid: primaryEid };
+      } else {
+        // Not yet known whether this is a click or a marquee drag — resolved
+        // on mousemove (once past MARQUEE_THRESHOLD) / mouseup (see below).
+        inputMode = 'marquee';
+      }
+    } else if (e.button === 1) {
+      e.preventDefault(); // stop the browser's native middle-click autoscroll cursor
+      inputMode = 'orbit';
+    } else if (e.button === 2) {
+      inputMode = 'pan';
     }
     canvas.classList.add('dragging');
   });
@@ -97,8 +141,16 @@ export function initCameraInput(canvas) {
         EditorContext.refreshProperties();
       }
       gizmoDrag = null;
-    } else if (moved < 4 && e.button === 0) {
-      pickAtScreen(e.clientX, e.clientY, canvas, e.shiftKey);
+    } else if (inputMode === 'marquee') {
+      if (moved < MARQUEE_THRESHOLD) {
+        // Plain click, no meaningful drag — single-object pick (existing behavior).
+        pickAtScreen(e.clientX, e.clientY, canvas, e.shiftKey);
+      } else {
+        const rect = canvas.getBoundingClientRect();
+        const x1 = e.clientX - rect.left, y1 = e.clientY - rect.top;
+        frustumSelect({ x0: mouseDownCanvasPos[0], y0: mouseDownCanvasPos[1], x1, y1 }, canvas, e.shiftKey);
+      }
+      hideMarquee();
     }
     inputMode = null;
     canvas.classList.remove('dragging');
@@ -125,6 +177,16 @@ export function initCameraInput(canvas) {
         syncPropertyInputs(gizmoDrag.eid);
       }
       lastMouse = [e.clientX, e.clientY];
+      return;
+    }
+    if (inputMode === 'marquee') {
+      const moved = Math.hypot(e.clientX - mouseDownPos[0], e.clientY - mouseDownPos[1]);
+      if (moved >= MARQUEE_THRESHOLD) {
+        const rect = canvas.getBoundingClientRect();
+        const curX = e.clientX - rect.left, curY = e.clientY - rect.top;
+        showMarquee(mouseDownCanvasPos[0], mouseDownCanvasPos[1]);
+        updateMarquee(mouseDownCanvasPos[0], mouseDownCanvasPos[1], curX, curY);
+      }
       return;
     }
     if (!inputMode) return;

@@ -128,6 +128,47 @@ export function vScale(a, s) {
   return [a[0] * s, a[1] * s, a[2] * s];
 }
 
+/**
+ * Applies a 4x4 matrix to a 3D point, returning homogeneous clip-space
+ * coordinates [x, y, z, w]. Caller is responsible for the perspective
+ * divide (x/w, y/w) — see projectToScreen() for the guarded version.
+ * @param {Float32Array} m - 16-element column-major matrix
+ * @param {Vector3} v - Point to transform
+ * @returns {number[]} [x, y, z, w] in clip space
+ */
+export function mat4Apply(m, v) {
+  const x = v[0], y = v[1], z = v[2];
+  return [
+    m[0] * x + m[4] * y + m[8] * z + m[12],
+    m[1] * x + m[5] * y + m[9] * z + m[13],
+    m[2] * x + m[6] * y + m[10] * z + m[14],
+    m[3] * x + m[7] * y + m[11] * z + m[15],
+  ];
+}
+
+/**
+ * Projects a world-space point to screen-space pixel coordinates.
+ * Returns null if the point is behind (or too close to) the camera —
+ * w <= epsilon means the perspective divide would be meaningless/inverted,
+ * so callers must skip these points rather than including garbage
+ * coordinates in a bounding-box computation (e.g. marquee select).
+ * @param {Float32Array} viewProj - combined view*projection matrix
+ * @param {Vector3} worldPoint
+ * @param {number} screenW
+ * @param {number} screenH
+ * @returns {{x:number,y:number}|null}
+ */
+export function projectToScreen(viewProj, worldPoint, screenW, screenH) {
+  const [cx, cy, , cw] = mat4Apply(viewProj, worldPoint);
+  if (cw <= 1e-5) return null; // behind camera / at the eye, perspective divide unusable
+  const ndcX = cx / cw;
+  const ndcY = cy / cw;
+  return {
+    x: (ndcX * 0.5 + 0.5) * screenW,
+    y: (1 - (ndcY * 0.5 + 0.5)) * screenH,
+  };
+}
+
 export function mat3RotX(a) {
   const c = Math.cos(a),
     s = Math.sin(a);

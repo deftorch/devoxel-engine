@@ -118,6 +118,14 @@
       canvas.dragging {
         cursor: grabbing;
       }
+      #marquee-box {
+        display: none;
+        position: absolute;
+        z-index: 3;
+        border: 1px solid #7fd4ff;
+        background: rgba(127, 212, 255, 0.12);
+        pointer-events: none; /* never intercept mouse events meant for the canvas beneath it */
+      }
 
       .panel-header {
         padding: 9px 12px;
@@ -333,7 +341,7 @@
           <option value="webgl">WebGL</option>
         </select>
         <span class="hint"
-          >Klik = pilih &middot; Drag kiri = orbit &middot; Drag kanan = pan &middot; Scroll = zoom</span
+          >Klik = pilih &middot; Drag kiri = marquee select &middot; Drag tengah = orbit &middot; Drag kanan = pan &middot; Shift = tambah seleksi &middot; Scroll = zoom</span
         >
       </div>
 
@@ -345,6 +353,7 @@
 
         <div id="viewport-wrap">
           <canvas id="gpu-canvas"></canvas>
+          <div id="marquee-box"></div>
           <div id="statusbar">
             <span><b>FPS</b> <span id="stat-fps">0</span></span>
             <span><b>Elemen</b> <span id="stat-count">0</span></span>
