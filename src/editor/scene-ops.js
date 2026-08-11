@@ -1,6 +1,6 @@
 import { addEntity, removeEntity, addComponent } from "bitecs";
 import { world, addGrowable, Renderable, RenderMesh } from "../core/ecs/components.js";
-import { Transform, ColorComp, NodeMeta, NameComp, EditorContext } from "./state.js";
+import { Transform, ColorComp, NodeMeta, NameComp, EditorContext, getSelection, getPrimarySelection, setSelection, clearSelection } from "./state.js";
 import History from "./history.js";
 import { buildCubeMesh } from "./geometry.js";
 
@@ -100,21 +100,25 @@ export function destroyNodeRaw(eid) {
 }
 
 export function selectNode(eid) {
-  EditorContext.selectedEid = eid;
+  if (eid < 0) clearSelection();
+  else setSelection([eid]);
+
+  const primaryEid = getPrimarySelection();
   const btnDelete = document.getElementById('btn-delete');
   const btnDuplicate = document.getElementById('btn-duplicate');
   const statSelected = document.getElementById('stat-selected');
   
-  if (btnDelete) btnDelete.disabled = eid < 0;
-  if (btnDuplicate) btnDuplicate.disabled = eid < 0 || !!NodeMeta.isGroup[eid];
-  if (statSelected) statSelected.textContent = eid < 0 ? '—' : NameComp.value[eid];
+  if (btnDelete) btnDelete.disabled = primaryEid < 0;
+  if (btnDuplicate) btnDuplicate.disabled = primaryEid < 0 || !!NodeMeta.isGroup[primaryEid];
+  if (statSelected) statSelected.textContent = primaryEid < 0 ? '—' : NameComp.value[primaryEid];
   
   EditorContext.refreshOutlinerSelection();
   EditorContext.refreshProperties();
 }
 
 export function addCube() {
-  const parent = EditorContext.selectedEid >= 0 && NodeMeta.isGroup[EditorContext.selectedEid] ? EditorContext.selectedEid : -1;
+  const primaryEid = getPrimarySelection();
+  const parent = primaryEid >= 0 && NodeMeta.isGroup[primaryEid] ? primaryEid : -1;
   const [r, g, b] = hexToRgb01(PALETTE[paletteIdx++ % PALETTE.length]);
   const data = {
     name: `Cube ${nextName.cube++}`,
@@ -138,7 +142,8 @@ export function addCube() {
 }
 
 export function addGroup() {
-  const parent = EditorContext.selectedEid >= 0 && NodeMeta.isGroup[EditorContext.selectedEid] ? EditorContext.selectedEid : -1;
+  const primaryEid = getPrimarySelection();
+  const parent = primaryEid >= 0 && NodeMeta.isGroup[primaryEid] ? primaryEid : -1;
   const data = { name: `Group ${nextName.group++}`, parent, isGroup: true };
   History.push({
     label: 'Add Group',
@@ -156,50 +161,59 @@ export function addGroup() {
 }
 
 export function deleteSelected() {
-  if (EditorContext.selectedEid < 0) return;
-  const eid = EditorContext.selectedEid;
-  const data = {
+  const targets = getSelection();
+  if (targets.length === 0) return;
+
+  const snapshots = Array.from(targets).map((eid) => ({
+    eid,
     name: NameComp.value[eid],
     parent: NodeMeta.parent[eid],
     isGroup: !!NodeMeta.isGroup[eid],
     transform: NodeMeta.isGroup[eid] ? null : readTransform(eid),
     orderIndex: EditorContext.sceneOrder.indexOf(eid),
-  };
+  }));
+
   History.push({
-    label: 'Delete Element',
+    label: targets.length > 1 ? `Delete ${targets.length} Elements` : 'Delete Element',
     redo() {
-      destroyNodeRaw(eid);
-      selectNode(-1);
+      for (const s of snapshots) destroyNodeRaw(s.eid);
+      clearSelection();
       EditorContext.refreshOutliner();
     },
     undo() {
-      createNodeRaw(data);
-      selectNode(data.eid);
+      for (const s of snapshots) createNodeRaw(s); 
+      setSelection(snapshots.map((s) => s.eid));
       EditorContext.refreshOutliner();
     },
   });
 }
 
 export function duplicateSelected() {
-  if (EditorContext.selectedEid < 0 || NodeMeta.isGroup[EditorContext.selectedEid]) return;
-  const src = readTransform(EditorContext.selectedEid);
-  const t = { ...src, ox: src.ox + 1, oz: src.oz + 1, px: src.px + 1, pz: src.pz + 1 };
-  const data = {
-    name: NameComp.value[EditorContext.selectedEid] + ' copy',
-    parent: NodeMeta.parent[EditorContext.selectedEid],
-    isGroup: false,
-    transform: t,
-  };
+  const targets = getSelection();
+  const validTargets = Array.from(targets).filter(eid => !NodeMeta.isGroup[eid]); // Only non-groups for now
+  if (validTargets.length === 0) return;
+
+  const newDatas = validTargets.map(eid => {
+    const src = readTransform(eid);
+    const t = { ...src, ox: src.ox + 1, oz: src.oz + 1, px: src.px + 1, pz: src.pz + 1 };
+    return {
+      name: NameComp.value[eid] + ' copy',
+      parent: NodeMeta.parent[eid],
+      isGroup: false,
+      transform: t,
+    };
+  });
+
   History.push({
-    label: 'Duplicate',
+    label: validTargets.length > 1 ? `Duplicate ${validTargets.length} Elements` : 'Duplicate',
     redo() {
-      createNodeRaw(data);
-      selectNode(data.eid);
+      const createdEids = newDatas.map(data => createNodeRaw(data));
+      setSelection(createdEids);
       EditorContext.refreshOutliner();
     },
     undo() {
-      destroyNodeRaw(data.eid);
-      selectNode(-1);
+      for (const data of newDatas) destroyNodeRaw(data.eid);
+      setSelection(validTargets);
       EditorContext.refreshOutliner();
     },
   });
