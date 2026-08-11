@@ -114,6 +114,32 @@ export function destroyNodeRaw(eid) {
   removeEntity(world, eid);
 }
 
+/**
+ * Syncs every UI element that depends on the current selection:
+ * Delete/Duplicate button enabled-state, the "Terpilih" status-bar text,
+ * and the Outliner/Properties panels. Call this after ANY code path that
+ * mutates selection directly (setSelection/toggleSelection/clearSelection)
+ * — do not call setSelection() and reimplement a subset of this inline,
+ * that's exactly how frustumSelect() ended up missing the button/status
+ * updates in an earlier pass.
+ */
+export function syncSelectionUI() {
+  const primaryEid = getPrimarySelection();
+  const btnDelete = document.getElementById('btn-delete');
+  const btnDuplicate = document.getElementById('btn-duplicate');
+  const statSelected = document.getElementById('stat-selected');
+
+  if (btnDelete) btnDelete.disabled = primaryEid < 0;
+  if (btnDuplicate) btnDuplicate.disabled = primaryEid < 0 || !!NodeMeta.isGroup[primaryEid];
+  if (statSelected) {
+    const sel = getSelection();
+    statSelected.textContent = sel.length === 0 ? '—' : sel.length === 1 ? NameComp.value[primaryEid] : `${sel.length} elemen`;
+  }
+
+  EditorContext.refreshOutlinerSelection();
+  EditorContext.refreshProperties();
+}
+
 export function selectNode(eid, shiftKey = false) {
   if (shiftKey && eid >= 0) {
     toggleSelection(eid);
@@ -122,17 +148,7 @@ export function selectNode(eid, shiftKey = false) {
     else setSelection([eid]);
   }
 
-  const primaryEid = getPrimarySelection();
-  const btnDelete = document.getElementById('btn-delete');
-  const btnDuplicate = document.getElementById('btn-duplicate');
-  const statSelected = document.getElementById('stat-selected');
-  
-  if (btnDelete) btnDelete.disabled = primaryEid < 0;
-  if (btnDuplicate) btnDuplicate.disabled = primaryEid < 0 || !!NodeMeta.isGroup[primaryEid];
-  if (statSelected) statSelected.textContent = primaryEid < 0 ? '—' : NameComp.value[primaryEid];
-  
-  EditorContext.refreshOutlinerSelection();
-  EditorContext.refreshProperties();
+  syncSelectionUI();
 }
 
 export function addCube() {

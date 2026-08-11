@@ -1,6 +1,6 @@
 import { vSub, vAdd, rotationMat3, mat3Transpose, mat3Apply, mat4Multiply, mat4LookAt, mat4Perspective, projectToScreen } from "../core/utils/math.js?v=2";
 import { EditorContext, NodeMeta, Transform, setSelection, getSelection } from "./state.js";
-import { readTransform, selectNode } from "./scene-ops.js";
+import { readTransform, selectNode, syncSelectionUI } from "./scene-ops.js";
 import { screenToRay, cameraBasis, getFovY } from "./camera-input.js";
 
 export function pickAtScreen(clientX, clientY, canvas, shiftKey = false) {
@@ -78,8 +78,7 @@ export function frustumSelect(rect, canvas, shiftKey = false) {
   if (shiftKey) setSelection([...new Set([...getSelection(), ...hits])]);
   else setSelection(hits);
 
-  EditorContext.refreshOutlinerSelection();
-  EditorContext.refreshProperties();
+  syncSelectionUI();
 }
 
 export function rayAABB(ro, rd, mn, mx) {
