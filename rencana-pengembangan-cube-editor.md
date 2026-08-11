@@ -115,13 +115,13 @@ Setelah Fase 1-5 selesai, `editor.js` (kini kumpulan modul) siap dipakai untuk f
 
 File yang terdampak (urutan pengerjaan disarankan satu-per-satu + jalankan aplikasi setelah tiap file, bukan sekaligus):
 
-- [ ] `src/editor/scene-ops.js` — `selectNode`, `addCube`, `addGroup`, `deleteSelected`, `duplicateSelected`.
-- [ ] `src/editor/picking.js` — `pickAtScreen` (hasil klik tunggal → `setSelection([eid])`, atau tambah ke seleksi jika modifier Shift ditekan).
-- [ ] `src/editor/camera-input.js` — `pickGizmoAxis`, alur `gizmoDrag` (lihat 6.4 untuk detail pivot multi-select).
-- [ ] `src/editor/editor.js` — shortcut `Delete`/`Backspace`, alur `drawDebugPrimitives` untuk outline & gizmo.
-- [ ] `src/editor/ui/outliner.js` — highlight baris terpilih (harus mendukung multi-highlight).
-- [ ] `src/editor/ui/properties.js` — mode tampilan saat seleksi > 1 objek (lihat catatan "Mixed value" di 6.3).
-- [ ] **Checkpoint:** semua fitur lama (single select, translate gizmo, delete, duplicate, undo/redo) harus identik perilakunya dengan sebelum migrasi. Jalankan `npm run test` + smoke test manual dari Fase 0.
+- [x] `src/editor/scene-ops.js` — `selectNode`, `addCube`, `addGroup`, `deleteSelected`, `duplicateSelected`.
+- [x] `src/editor/picking.js` — `pickAtScreen` (hasil klik tunggal → `setSelection([eid])`, atau tambah ke seleksi jika modifier Shift ditekan).
+- [x] `src/editor/camera-input.js` — `pickGizmoAxis`, alur `gizmoDrag` (lihat 6.4 untuk detail pivot multi-select).
+- [x] `src/editor/editor.js` — shortcut `Delete`/`Backspace`, alur `drawDebugPrimitives` untuk outline & gizmo.
+- [x] `src/editor/ui/outliner.js` — highlight baris terpilih (harus mendukung multi-highlight).
+- [x] `src/editor/ui/properties.js` — mode tampilan saat seleksi > 1 objek (lihat catatan "Mixed value" di 6.3).
+- [x] **Checkpoint:** semua fitur lama (single select, translate gizmo, delete, duplicate, undo/redo) harus identik perilakunya dengan sebelum migrasi. Jalankan `npm run test` + smoke test manual dari Fase 0.
 
 ### 6.3 — Marquee Select (Drag Rectangle Multi-Seleksi)
 
