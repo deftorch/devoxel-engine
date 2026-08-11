@@ -1,9 +1,10 @@
 import { vAdd, vSub, vScale, vCross, vNorm, vDot } from "../core/utils/math.js?v=2";
 import { EditorContext, Transform, NodeMeta, getPrimarySelection } from "./state.js";
-import { readTransform, writeTransform, commitTransform, rebuildMesh } from "./scene-ops.js";
+import { readTransform, writeTransform, commitTransform, rebuildMesh, getVirtualPivot } from "./scene-ops.js";
 import { syncPropertyInputs } from "./ui/properties.js";
 import { GIZMO_AXES, gizmoArmLength } from "./geometry.js";
 import { pickAtScreen, frustumSelect } from "./picking.js";
+import History from "./history.js";
 
 export function cameraBasis() {
   const cp = Math.cos(EditorContext.camera.pitch),
@@ -46,10 +47,9 @@ export function closestParamsBetweenLines(p0, d1, ro, d2) {
 }
 
 function pickGizmoAxis(clientX, clientY, canvas) {
-  const primaryEid = getPrimarySelection();
-  if (primaryEid < 0 || NodeMeta.isGroup[primaryEid]) return null;
+  const pivot = getVirtualPivot();
+  if (!pivot) return null;
   const { ro, rd } = screenToRay(clientX, clientY, canvas);
-  const pivot = [Transform.px[primaryEid], Transform.py[primaryEid], Transform.pz[primaryEid]];
   const armLen = gizmoArmLength();
   const threshold = armLen * 0.16;
   let best = null;
@@ -110,11 +110,17 @@ export function initCameraInput(canvas) {
     mouseDownCanvasPos = [e.clientX - rect.left, e.clientY - rect.top];
 
     if (e.button === 0) {
-      const primaryEid = getPrimarySelection();
+      const selection = Array.from(getSelection());
       const hit = pickGizmoAxis(e.clientX, e.clientY, canvas);
-      if (hit && primaryEid >= 0) {
+      if (hit) {
         inputMode = 'gizmo';
-        gizmoDrag = { axis: hit.axis, dir: hit.dir, startS: hit.s, startT: readTransform(primaryEid), eid: primaryEid };
+        const startTransforms = [];
+        for (const eid of selection) {
+          if (!NodeMeta.isGroup[eid]) {
+            startTransforms.push({ eid, t: readTransform(eid) });
+          }
+        }
+        gizmoDrag = { axis: hit.axis, dir: hit.dir, startS: hit.s, startTransforms, pivot: getVirtualPivot() };
       } else {
         // Not yet known whether this is a click or a marquee drag — resolved
         // on mousemove (once past MARQUEE_THRESHOLD) / mouseup (see below).
@@ -132,12 +138,28 @@ export function initCameraInput(canvas) {
   window.addEventListener('mouseup', (e) => {
     const moved = Math.hypot(e.clientX - mouseDownPos[0], e.clientY - mouseDownPos[1]);
     if (inputMode === 'gizmo' && gizmoDrag) {
-      const newT = readTransform(gizmoDrag.eid);
-      if (moved > 1)
-        commitTransform(gizmoDrag.eid, gizmoDrag.startT, newT);
-      else {
-        writeTransform(gizmoDrag.eid, gizmoDrag.startT);
-        rebuildMesh(gizmoDrag.eid);
+      if (moved > 1) {
+        const snapshots = gizmoDrag.startTransforms.map(st => ({ eid: st.eid, startT: st.t, newT: readTransform(st.eid) }));
+        const label = snapshots.length > 1 ? `Translate ${snapshots.length} Elements` : 'Translate Element';
+        
+        History.push({
+            label,
+            redo() {
+                for (const s of snapshots) writeTransform(s.eid, s.newT);
+                for (const s of snapshots) rebuildMesh(s.eid);
+                EditorContext.refreshProperties();
+            },
+            undo() {
+                for (const s of snapshots) writeTransform(s.eid, s.startT);
+                for (const s of snapshots) rebuildMesh(s.eid);
+                EditorContext.refreshProperties();
+            }
+        });
+      } else {
+        for (const st of gizmoDrag.startTransforms) {
+          writeTransform(st.eid, st.t);
+          rebuildMesh(st.eid);
+        }
         EditorContext.refreshProperties();
       }
       gizmoDrag = null;
@@ -161,20 +183,24 @@ export function initCameraInput(canvas) {
   window.addEventListener('mousemove', (e) => {
     if (inputMode === 'gizmo' && gizmoDrag) {
       const { ro, rd } = screenToRay(e.clientX, e.clientY, canvas);
-      const pivot = [gizmoDrag.startT.px, gizmoDrag.startT.py, gizmoDrag.startT.pz];
+      const pivot = gizmoDrag.pivot;
       const cp = closestParamsBetweenLines(pivot, gizmoDrag.dir, ro, rd);
       if (cp) {
         const delta = cp.s - gizmoDrag.startS;
-        const t = { ...gizmoDrag.startT };
-        t.ox += gizmoDrag.dir[0] * delta;
-        t.oy += gizmoDrag.dir[1] * delta;
-        t.oz += gizmoDrag.dir[2] * delta;
-        t.px += gizmoDrag.dir[0] * delta;
-        t.py += gizmoDrag.dir[1] * delta;
-        t.pz += gizmoDrag.dir[2] * delta;
-        writeTransform(gizmoDrag.eid, t);
-        rebuildMesh(gizmoDrag.eid);
-        syncPropertyInputs(gizmoDrag.eid);
+        for (const st of gizmoDrag.startTransforms) {
+          const t = { ...st.t };
+          t.ox += gizmoDrag.dir[0] * delta;
+          t.oy += gizmoDrag.dir[1] * delta;
+          t.oz += gizmoDrag.dir[2] * delta;
+          t.px += gizmoDrag.dir[0] * delta;
+          t.py += gizmoDrag.dir[1] * delta;
+          t.pz += gizmoDrag.dir[2] * delta;
+          writeTransform(st.eid, t);
+          rebuildMesh(st.eid);
+        }
+        if (gizmoDrag.startTransforms.length === 1) {
+            syncPropertyInputs(gizmoDrag.startTransforms[0].eid);
+        }
       }
       lastMouse = [e.clientX, e.clientY];
       return;

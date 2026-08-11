@@ -6,6 +6,21 @@ import { buildCubeMesh } from "./geometry.js";
 
 const PALETTE = ['#7fd4ff', '#ffb27f', '#b6ff7f', '#ff7fd4', '#7fffcf', '#d4ff7f', '#ff9f7f', '#9f7fff'];
 let paletteIdx = 0;
+
+export function getVirtualPivot() {
+  const selection = getSelection();
+  if (selection.length === 0) return null;
+  let cx = 0, cy = 0, cz = 0, count = 0;
+  for (const eid of selection) {
+    if (NodeMeta.isGroup[eid]) continue;
+    cx += Transform.px[eid];
+    cy += Transform.py[eid];
+    cz += Transform.pz[eid];
+    count++;
+  }
+  if (count === 0) return null;
+  return [cx / count, cy / count, cz / count];
+}
 export function hexToRgb01(hex) {
   const v = parseInt(hex.slice(1), 16);
   return [((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255];

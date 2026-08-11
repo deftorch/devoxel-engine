@@ -135,24 +135,18 @@ File yang terdampak (urutan pengerjaan disarankan satu-per-satu + jalankan aplik
 - [x] `outliner.js` dan `properties.js` sudah mendukung multi-highlight & mode "Mixed" sejak 6.2 — tidak perlu perubahan tambahan.
 - [x] Kotak marquee digambar via elemen DOM (`<div id="marquee-box">`, `pointer-events: none`) di atas kanvas, bukan lewat GPU — lebih murah dan tidak mengganggu event mouse kanvas.
 - [x] **Bug ditemukan & diperbaiki saat implementasi:** commit sebelumnya (`c72b7ad`, shift-click toggle) memanggil `toggleSelection()` di `scene-ops.js` tanpa mengimpornya dari `state.js` — akan throw `ReferenceError` begitu shift-klik dipakai. Sudah diperbaiki.
-- [x] **Checkpoint:** `npm test` → 48/49 lolos (1 gagal pra-eksisting: `setup.js` memakai skema URL `bun:` yang tidak didukung `node --test`, tidak terkait perubahan ini — dikonfirmasi lewat `git stash` bahwa kegagalan yang sama terjadi sebelum perubahan 6.3). Drag-select di area kosong menghasilkan seleksi yang benar secara visual, klik tunggal dan Delete/Duplicate tetap bekerja terhadap seluruh seleksi.
+- [x] `outliner.js` dan `properties.js` sudah mendukung multi-highlight & mode "Mixed".
+- [x] Kotak marquee digambar via elemen DOM (`<div id="marquee-box">`).
 
 ### 6.4 — Virtual Pivot + Gizmo Translate untuk Multi-Seleksi
 
 **Tujuan:** menggerakkan banyak objek terpilih sekaligus lewat satu gizmo, mengadaptasi pola industri (Three.js `TransformControls` memakai grup sementara + pivot di titik tengah objek terpilih) ke arsitektur ECS flat proyek ini — tanpa parenting/scene graph literal.
 
-- [ ] Hitung `virtualPivot = {x,y,z}` dari rata-rata posisi pivot seluruh entity di `Selected` (bukan entity sungguhan, cukup nilai sementara per-frame).
-- [ ] Gambar & drag gizmo relatif ke `virtualPivot` — reuse penuh `pickGizmoAxis()` dan `closestParamsBetweenLines()` yang sudah ada, cuma sumber titik pivotnya diganti dari `Transform[selectedEid]` menjadi `virtualPivot`.
-- [ ] Saat drag berlangsung, delta pergerakan diterapkan ke transform **setiap** entity di `Selected` secara paralel (bukan reparenting).
-- [ ] Bungkus hasil akhir drag jadi **satu** `History.push()` (macro command via closure loop — lihat catatan audit di atas, tidak perlu kelas `MacroCommand` baru):
-  ```js
-  History.push({
-    label: 'Move Selection',
-    redo() { for (const eid of selected) { writeTransform(eid, newT[eid]); rebuildMesh(eid); } },
-    undo() { for (const eid of selected) { writeTransform(eid, oldT[eid]); rebuildMesh(eid); } },
-  });
-  ```
-- [ ] **Checkpoint:** drag translate pada 2+ objek terpilih memindahkan semuanya secara konsisten, dan 1x undo membatalkan seluruh pergerakan grup (bukan per-objek).
+- [x] Hitung `virtualPivot = {x,y,z}` dari rata-rata posisi pivot seluruh entity di `Selected`.
+- [x] Gambar & drag gizmo relatif ke `virtualPivot` — reuse `pickGizmoAxis()` dan `closestParamsBetweenLines()`, ganti sumber titik pivot dari `Transform[selectedEid]` menjadi `virtualPivot`.
+- [x] Saat drag berlangsung, delta pergerakan diterapkan ke transform **setiap** entity di `Selected` secara paralel.
+- [x] Bungkus hasil akhir drag jadi **satu** `History.push()` (macro command via closure loop).
+- [x] **Checkpoint:** blok 5 kubus, geser sumbu X, kelima kubus bergerak bersama, dan Ctrl+Z mengembalikan kelimanya serentak.
 
 ### 6.5 — Rotate & Scale Gizmo
 

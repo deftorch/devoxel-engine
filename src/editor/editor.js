@@ -4,7 +4,7 @@ import { VoxelEngine } from "../core/index.js";
 import { Transform, ColorComp, NodeMeta, NameComp, EditorContext, getSelection, getPrimarySelection } from "./state.js";
 import History from "./history.js";
 import { buildCubeMesh, buildGridLines, interleaveLine, buildOutlineForEid, buildGizmoGeometry, gizmoArmLength, GIZMO_AXES } from "./geometry.js";
-import { uploadMesh, rebuildMesh, readTransform, writeTransform, hexToRgb01, rgb01ToHex, addCube, addGroup, deleteSelected, duplicateSelected, renameNode, commitTransform, selectNode } from "./scene-ops.js";
+import { uploadMesh, rebuildMesh, readTransform, writeTransform, hexToRgb01, rgb01ToHex, addCube, addGroup, deleteSelected, duplicateSelected, renameNode, commitTransform, selectNode, getVirtualPivot } from "./scene-ops.js";
 import { refreshOutliner, refreshOutlinerSelection } from "./ui/outliner.js";
 import { refreshProperties, syncPropertyInputs } from "./ui/properties.js";
 import { cameraBasis, getFovY, initCameraInput } from "./camera-input.js";
@@ -261,10 +261,9 @@ async function main() {
         debugData.lines.push({ data: outlineData, depthTest: true });
       }
 
-      const primaryEid = getPrimarySelection();
-      if (primaryEid >= 0 && !NodeMeta.isGroup[primaryEid]) {
-        const pivot = [Transform.px[primaryEid], Transform.py[primaryEid], Transform.pz[primaryEid]];
-        const gizmoGeo = buildGizmoGeometry(pivot);
+      const virtualPivot = getVirtualPivot();
+      if (virtualPivot) {
+        const gizmoGeo = buildGizmoGeometry(virtualPivot);
         debugData.lines.push({ data: gizmoGeo.lineData, depthTest: false }); // X-ray
         debugData.tris.push({ data: gizmoGeo.triData, depthTest: false });
       }
