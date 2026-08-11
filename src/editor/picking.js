@@ -77,6 +77,9 @@ export function frustumSelect(rect, canvas, shiftKey = false) {
 
   if (shiftKey) setSelection([...new Set([...getSelection(), ...hits])]);
   else setSelection(hits);
+
+  EditorContext.refreshOutlinerSelection();
+  EditorContext.refreshProperties();
 }
 
 export function rayAABB(ro, rd, mn, mx) {
