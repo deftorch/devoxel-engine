@@ -1,4 +1,4 @@
-import { ColorComp, NodeMeta, NameComp, EditorContext } from "../state.js";
+import { ColorComp, NodeMeta, NameComp, EditorContext, getSelection } from "../state.js";
 import { renameNode, selectNode, rgb01ToHex } from "../scene-ops.js";
 
 function escapeHtml(s) {
@@ -24,8 +24,9 @@ export function refreshOutliner() {
     outlinerList.innerHTML = `<div id="outliner-empty">Kosong. Klik "＋ Cube" di toolbar untuk mulai.</div>`;
   } else {
     for (const eid of EditorContext.sceneOrder) {
+      const isSelected = Array.from(getSelection()).includes(eid);
       const row = document.createElement('div');
-      row.className = 'node-row' + (eid === EditorContext.selectedEid ? ' selected' : '');
+      row.className = 'node-row' + (isSelected ? ' selected' : '');
       row.style.paddingLeft = 10 + depthOf(eid) * 14 + 'px';
       row.dataset.eid = eid;
       const isGroup = !!NodeMeta.isGroup[eid];
@@ -63,7 +64,8 @@ export function refreshOutliner() {
 
 export function refreshOutlinerSelection() {
   const outlinerList = document.getElementById('outliner-list');
+  const selection = Array.from(getSelection());
   outlinerList.querySelectorAll('.node-row').forEach((row) => {
-    row.classList.toggle('selected', Number(row.dataset.eid) === EditorContext.selectedEid);
+    row.classList.toggle('selected', selection.includes(Number(row.dataset.eid)));
   });
 }

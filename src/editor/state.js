@@ -62,10 +62,4 @@ export const toggleSelection = (eid) => {
   else addComponent(world, eid, Selected);
 };
 
-Object.defineProperty(EditorContext, 'selectedEid', {
-  get: function() { return getPrimarySelection(); },
-  set: function(val) {
-    if (val === -1) clearSelection();
-    else setSelection([val]);
-  }
-});
+

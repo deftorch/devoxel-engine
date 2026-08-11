@@ -1,7 +1,7 @@
 import { addEntity, removeEntity, addComponent, observe, onRemove } from "bitecs";
 import { world, growableComponent, addGrowable, Renderable, RenderMesh } from "../core/ecs/components.js";
 import { VoxelEngine } from "../core/index.js";
-import { Transform, ColorComp, NodeMeta, NameComp, EditorContext } from "./state.js";
+import { Transform, ColorComp, NodeMeta, NameComp, EditorContext, getSelection, getPrimarySelection } from "./state.js";
 import History from "./history.js";
 import { buildCubeMesh, buildGridLines, interleaveLine, buildOutlineForEid, buildGizmoGeometry, gizmoArmLength, GIZMO_AXES } from "./geometry.js";
 import { uploadMesh, rebuildMesh, readTransform, writeTransform, hexToRgb01, rgb01ToHex, addCube, addGroup, deleteSelected, duplicateSelected, renameNode, commitTransform, selectNode } from "./scene-ops.js";
@@ -149,7 +149,7 @@ window.addEventListener('keydown', (e) => {
   const tag = document.activeElement.tagName;
   const typing = tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement.isContentEditable;
   if (typing) return;
-  if ((e.key === 'Delete' || e.key === 'Backspace') && EditorContext.selectedEid >= 0) {
+  if ((e.key === 'Delete' || e.key === 'Backspace') && getSelection().length > 0) {
     e.preventDefault();
     deleteSelected();
   }
@@ -254,12 +254,16 @@ async function main() {
       debugData.lines.push({ data: gridVertexData, depthTest: true });
 
       // 2. Gizmo & Outline (jika ada seleksi)
-      const hasSelection = EditorContext.selectedEid >= 0 && !NodeMeta.isGroup[EditorContext.selectedEid];
-      if (hasSelection) {
-        const outlineData = buildOutlineForEid(EditorContext.selectedEid);
+      const selectedEids = getSelection();
+      for (const eid of selectedEids) {
+        if (NodeMeta.isGroup[eid]) continue;
+        const outlineData = buildOutlineForEid(eid);
         debugData.lines.push({ data: outlineData, depthTest: true });
+      }
 
-        const pivot = [Transform.px[EditorContext.selectedEid], Transform.py[EditorContext.selectedEid], Transform.pz[EditorContext.selectedEid]];
+      const primaryEid = getPrimarySelection();
+      if (primaryEid >= 0 && !NodeMeta.isGroup[primaryEid]) {
+        const pivot = [Transform.px[primaryEid], Transform.py[primaryEid], Transform.pz[primaryEid]];
         const gizmoGeo = buildGizmoGeometry(pivot);
         debugData.lines.push({ data: gizmoGeo.lineData, depthTest: false }); // X-ray
         debugData.tris.push({ data: gizmoGeo.triData, depthTest: false });

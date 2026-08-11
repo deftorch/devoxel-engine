@@ -1,4 +1,4 @@
-import { ColorComp, NodeMeta, NameComp, EditorContext } from "../state.js";
+import { ColorComp, NodeMeta, NameComp, EditorContext, getSelection } from "../state.js";
 import { renameNode, readTransform, writeTransform, rebuildMesh, commitTransform, hexToRgb01, rgb01ToHex } from "../scene-ops.js";
 
 function escapeHtml(s) {
@@ -25,11 +25,16 @@ export function syncPropertyInputs(eid) {
 
 export function refreshProperties() {
   const propertiesBody = document.getElementById('properties-body');
-  if (EditorContext.selectedEid < 0) {
+  const selection = getSelection();
+  if (selection.length === 0) {
     propertiesBody.innerHTML = `<div id="properties-empty">Tidak ada elemen terpilih.<br>Tambahkan cube dari toolbar.</div>`;
     return;
   }
-  const eid = EditorContext.selectedEid;
+  if (selection.length > 1) {
+    propertiesBody.innerHTML = `<div id="properties-empty">${selection.length} elemen terpilih.<br>Mode edit properti massal (Mixed) belum tersedia.</div>`;
+    return;
+  }
+  const eid = selection[0];
   const isGroup = !!NodeMeta.isGroup[eid];
   let html = `
     <div class="prop-group">
