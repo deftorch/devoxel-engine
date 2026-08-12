@@ -21,19 +21,29 @@ export const AddToolState = {
   active: false,
   phase: 'HOVER', // 'HOVER', 'DRAW_BASE', 'EXTRUDE'
   startPoint: null, // all points/normals below are in the TARGET SURFACE's
-  currentPoint: null, // own local (de-rotated) frame, not world space - see
-  normal: [0, 1, 0], // targetRinv()/worldToTarget() below. `normal` is kept
-  localNormal: [0, 1, 0], // in world space only for potential future display use;
-  targetRotation: [0, 0, 0], // all actual math uses localNormal, which (unlike
-  height: 1, // the world normal) is always exactly axis-aligned.
+  currentPoint: null, // own local (de-rotated, and re-anchored at the
+  normal: [0, 1, 0], // target's own pivot) frame, not world space - see
+  localNormal: [0, 1, 0], // targetRinv()/worldToTarget() below. `normal` is
+  targetRotation: [0, 0, 0], // kept in world space only for potential future
+  targetPivot: [0, 0, 0], // display use; all actual math uses localNormal
+  height: 1, // (always exactly axis-aligned) and targetPivot (the fixed
+             // anchor point the de-rotation must pivot around).
 
   /** Inverse rotation matrix of the surface currently being drawn on. */
   targetRinv() {
     return mat3Transpose(rotationMat3(...this.targetRotation));
   },
-  /** World-space point -> the target surface's local (de-rotated) frame. */
+  /**
+   * World-space point -> the target surface's local (de-rotated) frame,
+   * anchored at the target's OWN pivot - not the world origin. Rotating
+   * about the origin instead only happens to give the right answer when
+   * the target sits exactly on the rotation axis; for a target positioned
+   * anywhere else it silently produces a wrong, offset result (this was a
+   * real bug: the "ghost" cube would render somewhere unrelated to the
+   * cursor for any target not sitting on the world's rotation axis).
+   */
   worldToTarget(worldPoint) {
-    return mat3Apply(this.targetRinv(), worldPoint);
+    return mat3Apply(this.targetRinv(), vSub(worldPoint, this.targetPivot));
   },
 
   getCubeTransform() {
@@ -74,22 +84,32 @@ export const AddToolState = {
     const sx = maxX - minX;
     const sy = maxY - minY;
     const sz = maxZ - minZ;
-    const px = minX + sx/2;
-    const py = minY + sy/2;
-    const pz = minZ + sz/2;
+    // Local-frame (target-pivot-relative, de-rotated) centroid.
+    const Lpx = minX + sx / 2, Lpy = minY + sy / 2, Lpz = minZ + sz / 2;
 
     const [r, g, b] = hexToRgb01(PALETTE[paletteIdx % PALETTE.length]);
 
-    // ox/oy/oz/px/py/pz above were computed entirely in the target's local
-    // (de-rotated) frame - exactly the same numbers buildCubeMesh's corner
-    // formula expects for an unrotated box. Attaching the target's own
-    // rotation here is enough to make the new box parallel to the face it
-    // was drawn on: worldCorner = R*((ox+lx)-px, ...) + px,py,pz, and since
-    // (ox+lx)-px is a pure local-frame difference, R correctly carries it
-    // into the target's true world orientation. No other math needs to
-    // change for this to work.
+    // Re-anchor: rotate the local-frame centroid offset by the target's
+    // rotation and add back the target's own pivot, to get the new box's
+    // TRUE world-space pivot. ox/oy/oz are then re-derived so that
+    // buildCubeMesh's corner formula - worldCorner = R*((ox+lx)-px,...)+
+    // px,py,pz, which rotates around THIS box's own px/py/pz, not the
+    // target's - reproduces exactly the local-frame shape that was drawn.
+    // (See Fase 6.8 notes in the roadmap for the full derivation; the
+    // earlier version of this function skipped the re-anchoring step and
+    // only coincidentally looked correct for targets sitting exactly on
+    // their own rotation axis.)
+    const R = rotationMat3(...this.targetRotation);
+    const worldCentroidOffset = mat3Apply(R, [Lpx, Lpy, Lpz]);
+    const px = this.targetPivot[0] + worldCentroidOffset[0];
+    const py = this.targetPivot[1] + worldCentroidOffset[1];
+    const pz = this.targetPivot[2] + worldCentroidOffset[2];
+    const ox = px + (minX - Lpx);
+    const oy = py + (minY - Lpy);
+    const oz = pz + (minZ - Lpz);
+
     return {
-      ox: minX, oy: minY, oz: minZ,
+      ox, oy, oz,
       sx, sy, sz,
       px, py, pz,
       rx: this.targetRotation[0], ry: this.targetRotation[1], rz: this.targetRotation[2],
@@ -110,6 +130,7 @@ export function handleAddToolPointerMove(clientX, clientY, canvas) {
       AddToolState.normal = hit.normal;
       AddToolState.localNormal = hit.localNormal;
       AddToolState.targetRotation = hit.rotation;
+      AddToolState.targetPivot = hit.pivot;
       const localPoint = AddToolState.worldToTarget(hit.point);
       AddToolState.currentPoint = snapVector(localPoint);
       AddToolState.startPoint = AddToolState.currentPoint;
@@ -119,9 +140,8 @@ export function handleAddToolPointerMove(clientX, clientY, canvas) {
     }
   } else if (AddToolState.phase === 'DRAW_BASE') {
     const { ro, rd } = screenToRay(clientX, clientY, canvas);
-    const Rinv = AddToolState.targetRinv();
-    const roLocal = mat3Apply(Rinv, ro);
-    const rdLocal = mat3Apply(Rinv, rd);
+    const roLocal = AddToolState.worldToTarget(ro);
+    const rdLocal = mat3Apply(AddToolState.targetRinv(), rd);
     const planeHit = rayPlaneIntersect(roLocal, rdLocal, AddToolState.startPoint, AddToolState.localNormal);
     if (planeHit) {
       AddToolState.currentPoint = snapVector(planeHit);
@@ -129,9 +149,8 @@ export function handleAddToolPointerMove(clientX, clientY, canvas) {
     }
   } else if (AddToolState.phase === 'EXTRUDE') {
     const { ro, rd } = screenToRay(clientX, clientY, canvas);
-    const Rinv = AddToolState.targetRinv();
-    const roLocal = mat3Apply(Rinv, ro);
-    const rdLocal = mat3Apply(Rinv, rd);
+    const roLocal = AddToolState.worldToTarget(ro);
+    const rdLocal = mat3Apply(AddToolState.targetRinv(), rd);
     // Project ray to the normal axis passing through startPoint
     const cp = closestParamsBetweenLines(AddToolState.startPoint, AddToolState.localNormal, roLocal, rdLocal);
     if (cp) {
