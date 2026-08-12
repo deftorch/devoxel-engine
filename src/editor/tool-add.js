@@ -1,7 +1,7 @@
 import { vAdd, vSub, vScale, vNorm, rayPlaneIntersect } from "../core/utils/math.js?v=2";
 import { raycastWorld } from "./picking.js";
 import { screenToRay, closestParamsBetweenLines } from "./camera-input.js";
-import { createNodeRaw, selectNode } from "./scene-ops.js";
+import { createNodeRaw, destroyNodeRaw, selectNode } from "./scene-ops.js";
 import { getPrimarySelection, NodeMeta, EditorContext } from "./state.js";
 import History from "./history.js";
 
@@ -119,58 +119,13 @@ export function handleAddToolPointerDown(clientX, clientY, canvas) {
     AddToolState.phase = 'DRAW_BASE';
     return true;
   } else if (AddToolState.phase === 'EXTRUDE') {
-    // Finalize
     const t = AddToolState.getCubeTransform();
-    if (t) {
-      const primaryEid = getPrimarySelection();
-      const parent = primaryEid >= 0 && NodeMeta.isGroup[primaryEid] ? primaryEid : -1;
-      
-      const data = {
-        name: `Cube ${nextNameCube++}`,
-        parent,
-        isGroup: false,
-        transform: t,
-      };
-      
-      paletteIdx++;
-      
-      History.push({
-        label: 'Add Box (Draw)',
-        redo() {
-          createNodeRaw(data);
-          selectNode(data.eid);
-          EditorContext.emit('sceneMutated');
-        },
-        undo() {
-          // Assuming destroyNodeRaw is accessible or we just use scene-ops
-          // For now, let's dispatch an event or call it
-        }
-      });
-      // We need destroyNodeRaw from scene-ops to implement undo fully.
-      // Let's import it above.
-    }
-    
+    if (t) finalizeCube(t);
     AddToolState.phase = 'HOVER';
     return true;
   }
   return false;
 }
-
-import { destroyNodeRaw } from "./scene-ops.js";
-
-// override undo in history push
-const realPush = History.push;
-History.push = function(op) {
-    if(op.label === 'Add Box (Draw)') {
-        const oldUndo = op.undo;
-        op.undo = function() {
-           // wait, we need data.eid which is populated in redo
-           // so we capture data object
-        }
-    }
-    realPush.call(this, op);
-}
-// wait, instead of hacking History.push, I will just fix the undo function inside handleAddToolPointerDown.
 
 export function handleAddToolPointerUp(clientX, clientY, canvas, isClick) {
   if (!AddToolState.active) return false;

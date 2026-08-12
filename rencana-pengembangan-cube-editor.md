@@ -182,6 +182,16 @@ File yang terdampak (urutan pengerjaan disarankan satu-per-satu + jalankan aplik
 
 ---
 
+### 6.8 — Add-Cube Tool: Draw & Extrude (di luar rencana awal, ditambahkan langsung oleh pengembang)
+
+**Catatan:** fitur ini tidak ada di rencana 6.1-6.7 di atas — ditambahkan langsung sebagai `tool-add.js` (raycasting ke permukaan objek/ground plane, preview outline interaktif, alur klik-cepat untuk kubus 1×1×1 atau drag-untuk-gambar-alas-lalu-extrude-tinggi). Didokumentasikan di sini untuk konsistensi riwayat proyek.
+
+- [x] `raycastWorld()`/`rayAABBWithNormal()` di `picking.js` — deteksi permukaan objek (dengan normal wajah) atau ground plane `y=0` sebagai fallback. **Diverifikasi terpisah** lewat test numerik manual (box axis-aligned dari 3 arah, plus kasus kubus yang dirotasi 45° — semua hasil `t`/normal sesuai perhitungan tangan) karena ini fondasi matematika baru yang dipakai seluruh tool.
+- [x] Preview outline live (`buildOutlineForTransform`, hasil ekstraksi dari `buildOutlineForEid` yang sudah ada) + fix pendukung di `webgpu/engine.js` untuk buffer debug kosong (`getDebugBuffer` sekarang aman menerima data 0-panjang, sebelumnya berpotensi error validasi WebGPU saat tidak ada apa pun untuk digambar).
+- [x] **Bug ditemukan & diperbaiki saat review:** kode yang di-push mengandung sisa proses debugging yang belum dibereskan — `handleAddToolPointerDown` punya cabang finalize EXTRUDE dengan `undo()` **kosong** (komentar di kode sendiri: "we need destroyNodeRaw... For now, let's dispatch an event or call it"), DAN ada monkey-patch global `History.push = function(op) {...}` yang menimpa `undo` jadi kosong untuk **setiap** entri berlabel `'Add Box (Draw)'` — termasuk yang berasal dari `finalizeCube()`, implementasi yang sebenarnya sudah benar. Akibatnya **kedua alur pembuatan kubus (klik cepat maupun draw+extrude) sama-sama tidak bisa di-undo**, walau salah satunya sudah ditulis dengan benar. Diverifikasi dengan skrip simulasi terisolasi sebelum dan sesudah perbaikan. Diperbaiki dengan menghapus monkey-patch dan cabang kode mati, menyatukan kedua alur untuk memanggil `finalizeCube()` yang sama.
+- **Observasi kecil (belum diperbaiki, tidak mendesak):** `tool-add.js` punya `paletteIdx`/`nextNameCube` sendiri, terpisah dari `paletteIdx`/`nextName.cube` di `scene-ops.js`. Saat ini tidak terlihat sebagai bug karena tombol "+Cube" sekarang mengarah ke tool draw ini (bukan lagi `addCube()` langsung), tapi kalau suatu saat `addCube()` lama dipanggil lagi dari UI, penomoran nama & rotasi warna palet bisa tumpang tindih antar keduanya. Perlu didiskusikan apakah counter-nya sebaiknya disatukan.
+- [x] **Checkpoint:** `npm test` → 52/53 lolos (kegagalan pra-eksisting `setup.js`, tidak terkait). Kedua alur (klik cepat & draw+extrude) diverifikasi lewat simulasi end-to-end: buat kubus → undo → `sceneOrder` kembali ke kondisi semula.
+
 ## Ringkasan Prioritas
 
 1. **Fase 1-3 = wajib, tidak bisa ditunda** — ini yang menyelesaikan bug WebGL fallback secara benar (lewat abstraksi), bukan tambal sulam.
