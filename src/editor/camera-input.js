@@ -5,11 +5,18 @@ import { syncPropertyInputs } from "./ui/properties.js";
 import { GIZMO_AXES, gizmoArmLength } from "./geometry.js";
 import { pickAtScreen, frustumSelect } from "./picking.js";
 import History from "./history.js";
+import { handleAddToolPointerDown, handleAddToolPointerMove, handleAddToolPointerUp, AddToolState } from "./tool-add.js";
 
 let gizmoMode = 'translate'; // 'translate' | 'rotate' | 'scale'
-export function getGizmoMode() { return gizmoMode; }
+export function getGizmoMode() { return AddToolState.active ? 'add' : gizmoMode; }
 export function setGizmoMode(mode) {
-  if (mode === 'translate' || mode === 'rotate' || mode === 'scale') gizmoMode = mode;
+  if (mode === 'translate' || mode === 'rotate' || mode === 'scale') {
+    gizmoMode = mode;
+    AddToolState.active = false;
+  } else if (mode === 'add') {
+    AddToolState.active = true;
+    AddToolState.phase = 'HOVER';
+  }
 }
 
 export function cameraBasis() {
@@ -152,6 +159,14 @@ export function initCameraInput(canvas) {
     mouseDownCanvasPos = [e.clientX - rect.left, e.clientY - rect.top];
 
     if (e.button === 0) {
+      if (AddToolState.active) {
+         if (handleAddToolPointerDown(e.clientX, e.clientY, canvas)) {
+             inputMode = 'add_tool';
+             canvas.classList.add('dragging');
+             return;
+         }
+      }
+
       const selection = Array.from(getSelection());
       const pivot = getVirtualPivot();
       let hit = null;
@@ -193,6 +208,15 @@ export function initCameraInput(canvas) {
 
   window.addEventListener('mouseup', (e) => {
     const moved = Math.hypot(e.clientX - mouseDownPos[0], e.clientY - mouseDownPos[1]);
+    
+    if (inputMode === 'add_tool') {
+        const isClick = moved < MARQUEE_THRESHOLD;
+        handleAddToolPointerUp(e.clientX, e.clientY, canvas, isClick);
+        inputMode = null;
+        canvas.classList.remove('dragging');
+        return;
+    }
+
     if (inputMode === 'gizmo' && gizmoDrag) {
       if (moved > 1) {
         const snapshots = gizmoDrag.startTransforms.map(st => ({ eid: st.eid, startT: st.t, newT: readTransform(st.eid) }));
@@ -238,6 +262,14 @@ export function initCameraInput(canvas) {
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
   window.addEventListener('mousemove', (e) => {
+    if (AddToolState.active && inputMode !== 'orbit' && inputMode !== 'pan') {
+       handleAddToolPointerMove(e.clientX, e.clientY, canvas);
+       if (inputMode === 'add_tool') {
+           lastMouse = [e.clientX, e.clientY];
+           return;
+       }
+    }
+
     if (inputMode === 'gizmo' && gizmoDrag) {
       const { ro, rd } = screenToRay(e.clientX, e.clientY, canvas);
       if (gizmoDrag.mode === 'translate') {

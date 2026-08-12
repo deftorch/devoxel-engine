@@ -136,12 +136,12 @@ export async function initWebGPU(canvas) {
   let debugUniformArray = new Float32Array(16);
 
   function getDebugBuffer(data) {
-    const size = data.byteLength;
+    const size = Math.ceil(data.byteLength / 4) * 4;
+    if (size === 0) return { buffer: null, count: 0 };
     const buffer = device.createBuffer({
-      size, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, mappedAtCreation: true
+      size, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
-    new Float32Array(buffer.getMappedRange()).set(data);
-    buffer.unmap();
+    device.queue.writeBuffer(buffer, 0, data);
     return { buffer, count: data.length / 6 }; // 6 floats per vertex (xyz, rgb)
   }
 
@@ -226,11 +226,10 @@ export async function initWebGPU(canvas) {
         device.queue.writeBuffer(debugUniformBuffer, 0, debugUniformArray);
         pass.setBindGroup(0, debugBG);
         for (const draw of activeDebugDraws) {
+          if (!draw.bufferInfo.buffer) continue;
           pass.setPipeline(draw.pipeline);
           pass.setVertexBuffer(0, draw.bufferInfo.buffer);
           pass.draw(draw.bufferInfo.count);
-          // Auto cleanup buffer after single use
-          // Wait, WebGPU needs the buffer to be alive until queue submits. We'll destroy them in the next frame.
         }
       }
 
@@ -246,7 +245,7 @@ export async function initWebGPU(canvas) {
     drawDebugPrimitives(cameraState, debugData) {
       // Clean up buffers from previous frame
       for (const draw of activeDebugDraws) {
-        draw.bufferInfo.buffer.destroy();
+        if (draw.bufferInfo.buffer) draw.bufferInfo.buffer.destroy();
       }
       activeDebugDraws = [];
 

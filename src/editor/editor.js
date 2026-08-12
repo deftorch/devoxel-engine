@@ -3,7 +3,8 @@ import { world, growableComponent, addGrowable, Renderable, RenderMesh } from ".
 import { VoxelEngine } from "../core/index.js";
 import { Transform, ColorComp, NodeMeta, NameComp, EditorContext, getSelection, getPrimarySelection } from "./state.js";
 import History from "./history.js";
-import { buildCubeMesh, buildGridLines, interleaveLine, buildOutlineForEid, buildGizmoGeometry, buildRotateGizmoGeometry, buildScaleGizmoGeometry, gizmoArmLength, GIZMO_AXES } from "./geometry.js";
+import { buildCubeMesh, buildGridLines, interleaveLine, buildOutlineForEid, buildOutlineForTransform, buildGizmoGeometry, buildRotateGizmoGeometry, buildScaleGizmoGeometry, gizmoArmLength, GIZMO_AXES } from "./geometry.js";
+import { AddToolState } from "./tool-add.js";
 import { uploadMesh, rebuildMesh, readTransform, writeTransform, hexToRgb01, rgb01ToHex, addCube, addGroup, deleteSelected, duplicateSelected, renameNode, commitTransform, selectNode, getVirtualPivot } from "./scene-ops.js";
 import { refreshOutliner } from "./ui/outliner.js";
 import { syncPropertyInputs } from "./ui/properties.js";
@@ -121,7 +122,7 @@ window.addEventListener('unhandledrejection', (e) =>
 // -----------------------------------------------------------------------
 // Toolbar wiring
 // -----------------------------------------------------------------------
-$('btn-add-cube').addEventListener('click', addCube);
+$('btn-add-cube').addEventListener('click', () => setGizmoModeAndSync('add'));
 $('btn-add-group').addEventListener('click', addGroup);
 $('btn-delete').addEventListener('click', deleteSelected);
 $('btn-duplicate').addEventListener('click', duplicateSelected);
@@ -131,7 +132,7 @@ $('btn-export').addEventListener('click', exportScene);
 
 function setGizmoModeAndSync(mode) {
   setGizmoMode(mode);
-  for (const [id, m] of [['btn-gizmo-translate', 'translate'], ['btn-gizmo-rotate', 'rotate'], ['btn-gizmo-scale', 'scale']]) {
+  for (const [id, m] of [['btn-gizmo-translate', 'translate'], ['btn-gizmo-rotate', 'rotate'], ['btn-gizmo-scale', 'scale'], ['btn-add-cube', 'add']]) {
     const btn = document.getElementById(id);
     if (btn) btn.classList.toggle('gizmo-mode-active', m === mode);
   }
@@ -283,12 +284,22 @@ async function main() {
       const virtualPivot = getVirtualPivot();
       if (virtualPivot) {
         const mode = getGizmoMode();
-        const gizmoGeo =
-          mode === 'rotate' ? buildRotateGizmoGeometry(virtualPivot) :
-          mode === 'scale' ? buildScaleGizmoGeometry(virtualPivot) :
-          buildGizmoGeometry(virtualPivot);
-        debugData.lines.push({ data: gizmoGeo.lineData, depthTest: false }); // X-ray
-        if (gizmoGeo.triData) debugData.tris.push({ data: gizmoGeo.triData, depthTest: false });
+        if (mode !== 'add') {
+          const gizmoGeo =
+            mode === 'rotate' ? buildRotateGizmoGeometry(virtualPivot) :
+            mode === 'scale' ? buildScaleGizmoGeometry(virtualPivot) :
+            buildGizmoGeometry(virtualPivot);
+          debugData.lines.push({ data: gizmoGeo.lineData, depthTest: false }); // X-ray
+          if (gizmoGeo.triData) debugData.tris.push({ data: gizmoGeo.triData, depthTest: false });
+        }
+      }
+
+      if (AddToolState.active && AddToolState.currentPoint) {
+        const t = AddToolState.getCubeTransform();
+        if (t) {
+          const outline = buildOutlineForTransform(t);
+          debugData.lines.push({ data: outline, depthTest: true });
+        }
       }
 
       // Kirim ke renderer

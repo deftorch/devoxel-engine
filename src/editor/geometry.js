@@ -107,11 +107,11 @@ export function interleaveLine(positions, colors) {
   return out;
 }
 
-export function buildOutlineForEid(eid) {
-  const sx = Transform.sx[eid], sy = Transform.sy[eid], sz = Transform.sz[eid];
-  const ox = Transform.ox[eid], oy = Transform.oy[eid], oz = Transform.oz[eid];
-  const px = Transform.px[eid], py = Transform.py[eid], pz = Transform.pz[eid];
-  const R = rotationMat3(Transform.rx[eid], Transform.ry[eid], Transform.rz[eid]);
+export function buildOutlineForTransform(t) {
+  const sx = t.sx, sy = t.sy, sz = t.sz;
+  const ox = t.ox, oy = t.oy, oz = t.oz;
+  const px = t.px, py = t.py, pz = t.pz;
+  const R = rotationMat3(t.rx, t.ry, t.rz);
   const c = (lx, ly, lz) => {
     const rel = mat3Apply(R, [ox + lx - px, oy + ly - py, oz + lz - pz]);
     return [rel[0] + px, rel[1] + py, rel[2] + pz];
@@ -131,6 +131,15 @@ export function buildOutlineForEid(eid) {
     col.push(...yellow);
   }
   return interleaveLine(pos, col);
+}
+
+export function buildOutlineForEid(eid) {
+  return buildOutlineForTransform({
+    sx: Transform.sx[eid], sy: Transform.sy[eid], sz: Transform.sz[eid],
+    ox: Transform.ox[eid], oy: Transform.oy[eid], oz: Transform.oz[eid],
+    px: Transform.px[eid], py: Transform.py[eid], pz: Transform.pz[eid],
+    rx: Transform.rx[eid], ry: Transform.ry[eid], rz: Transform.rz[eid],
+  });
 }
 
 export const GIZMO_AXES = [
