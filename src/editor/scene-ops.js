@@ -136,8 +136,7 @@ export function syncSelectionUI() {
     statSelected.textContent = sel.length === 0 ? '—' : sel.length === 1 ? NameComp.value[primaryEid] : `${sel.length} elemen`;
   }
 
-  EditorContext.refreshOutlinerSelection();
-  EditorContext.refreshProperties();
+  EditorContext.emit('selectionChanged');
 }
 
 export function selectNode(eid, shiftKey = false) {
@@ -166,12 +165,12 @@ export function addCube() {
     redo() {
       createNodeRaw(data);
       selectNode(data.eid);
-      EditorContext.refreshOutliner();
+      EditorContext.emit('sceneMutated');
     },
     undo() {
       destroyNodeRaw(data.eid);
       selectNode(-1);
-      EditorContext.refreshOutliner();
+      EditorContext.emit('sceneMutated');
     },
   });
 }
@@ -185,12 +184,12 @@ export function addGroup() {
     redo() {
       createNodeRaw(data);
       selectNode(data.eid);
-      EditorContext.refreshOutliner();
+      EditorContext.emit('sceneMutated');
     },
     undo() {
       destroyNodeRaw(data.eid);
       selectNode(-1);
-      EditorContext.refreshOutliner();
+      EditorContext.emit('sceneMutated');
     },
   });
 }
@@ -213,12 +212,14 @@ export function deleteSelected() {
     redo() {
       for (const s of snapshots) destroyNodeRaw(s.eid);
       clearSelection();
-      EditorContext.refreshOutliner();
+      syncSelectionUI();
+      EditorContext.emit('sceneMutated');
     },
     undo() {
       for (const s of snapshots) createNodeRaw(s); 
       setSelection(snapshots.map((s) => s.eid));
-      EditorContext.refreshOutliner();
+      syncSelectionUI();
+      EditorContext.emit('sceneMutated');
     },
   });
 }
@@ -244,12 +245,14 @@ export function duplicateSelected() {
     redo() {
       const createdEids = newDatas.map(data => createNodeRaw(data));
       setSelection(createdEids);
-      EditorContext.refreshOutliner();
+      syncSelectionUI();
+      EditorContext.emit('sceneMutated');
     },
     undo() {
       for (const data of newDatas) destroyNodeRaw(data.eid);
       setSelection(validTargets);
-      EditorContext.refreshOutliner();
+      syncSelectionUI();
+      EditorContext.emit('sceneMutated');
     },
   });
 }
@@ -257,18 +260,18 @@ export function duplicateSelected() {
 export function renameNode(eid, newName) {
   const oldName = NameComp.value[eid];
   if (newName === oldName || !newName.trim()) {
-    EditorContext.refreshOutliner();
+    EditorContext.emit('sceneMutated');
     return;
   }
   History.push({
     label: 'Rename',
     redo() {
       NameComp.value[eid] = newName;
-      EditorContext.refreshOutliner();
+      EditorContext.emit('sceneMutated');
     },
     undo() {
       NameComp.value[eid] = oldName;
-      EditorContext.refreshOutliner();
+      EditorContext.emit('sceneMutated');
     },
   });
 }
@@ -279,12 +282,12 @@ export function commitTransform(eid, oldT, newT) {
     redo() {
       writeTransform(eid, newT);
       rebuildMesh(eid);
-      EditorContext.refreshProperties();
+      EditorContext.emit('transformChanged');
     },
     undo() {
       writeTransform(eid, oldT);
       rebuildMesh(eid);
-      EditorContext.refreshProperties();
+      EditorContext.emit('transformChanged');
     },
   });
 }

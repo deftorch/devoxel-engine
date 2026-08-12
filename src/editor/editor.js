@@ -5,15 +5,17 @@ import { Transform, ColorComp, NodeMeta, NameComp, EditorContext, getSelection, 
 import History from "./history.js";
 import { buildCubeMesh, buildGridLines, interleaveLine, buildOutlineForEid, buildGizmoGeometry, buildRotateGizmoGeometry, buildScaleGizmoGeometry, gizmoArmLength, GIZMO_AXES } from "./geometry.js";
 import { uploadMesh, rebuildMesh, readTransform, writeTransform, hexToRgb01, rgb01ToHex, addCube, addGroup, deleteSelected, duplicateSelected, renameNode, commitTransform, selectNode, getVirtualPivot } from "./scene-ops.js";
-import { refreshOutliner, refreshOutlinerSelection } from "./ui/outliner.js";
-import { refreshProperties, syncPropertyInputs } from "./ui/properties.js";
+import { refreshOutliner } from "./ui/outliner.js";
+import { syncPropertyInputs } from "./ui/properties.js";
 import { cameraBasis, getFovY, initCameraInput, getGizmoMode, setGizmoMode } from "./camera-input.js";
 import { exportScene, importScene } from "./io.js";
 import { vAdd, vSub, vScale, vCross, vDot, vNorm, rotationMat3, mat3Apply, mat4Perspective, mat4LookAt, mat4Multiply } from "../core/utils/math.js?v=2";
 
-EditorContext.refreshOutliner = () => refreshOutliner();
-EditorContext.refreshOutlinerSelection = () => refreshOutlinerSelection();
-EditorContext.refreshProperties = () => refreshProperties();
+// Outliner and Properties register themselves as EditorContext listeners
+// (see the bottom of ui/outliner.js and ui/properties.js) — importing them
+// above is what triggers that registration. No manual wiring needed here
+// anymore (Fase 6.6: replaced the old single-callback
+// EditorContext.refreshX = fn pattern with EditorContext.on/emit).
 
 // =============================================================================
 // Cube Editor Prototype — dibangun dengan mengadaptasi pola dari voxel-engine

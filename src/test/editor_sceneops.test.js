@@ -17,9 +17,7 @@ describe('Editor Scene Ops', () => {
     clearSelection();
     History.undoStack.length = 0;
     History.redoStack.length = 0;
-    EditorContext.refreshOutliner = () => {};
-    EditorContext.refreshOutlinerSelection = () => {};
-    EditorContext.refreshProperties = () => {};
+    EditorContext._listeners = {};
     EditorContext.engineRef = {
       rendererPlugin: { ready: false, createMesh: () => ({ destroy: () => {} }) }
     };
@@ -79,5 +77,40 @@ describe('Editor Scene Ops', () => {
     
     History.undo();
     assert.equal(NameComp.value[eid], oldName);
+  });
+});
+
+describe('EditorContext pub/sub (Fase 6.6)', () => {
+  beforeEach(() => {
+    EditorContext._listeners = {};
+  });
+
+  test('emit calls every registered listener for that event', () => {
+    let aCalls = 0, bCalls = 0;
+    EditorContext.on('sceneMutated', () => aCalls++);
+    EditorContext.on('sceneMutated', () => bCalls++);
+    EditorContext.emit('sceneMutated');
+    assert.equal(aCalls, 1);
+    assert.equal(bCalls, 1);
+  });
+
+  test('emit does not cross-fire listeners registered for a different event', () => {
+    let selectionCalls = 0, transformCalls = 0;
+    EditorContext.on('selectionChanged', () => selectionCalls++);
+    EditorContext.on('transformChanged', () => transformCalls++);
+    EditorContext.emit('selectionChanged');
+    assert.equal(selectionCalls, 1);
+    assert.equal(transformCalls, 0);
+  });
+
+  test('emit on an event with no listeners does not throw', () => {
+    assert.doesNotThrow(() => EditorContext.emit('sceneMutated'));
+  });
+
+  test('emit passes the payload through to listeners', () => {
+    let received = null;
+    EditorContext.on('sceneMutated', (payload) => { received = payload; });
+    EditorContext.emit('sceneMutated', { eid: 42 });
+    assert.deepEqual(received, { eid: 42 });
   });
 });

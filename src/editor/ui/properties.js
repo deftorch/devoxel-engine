@@ -114,3 +114,6 @@ export function refreshProperties() {
     colorStartT = null;
   });
 }
+
+EditorContext.on('selectionChanged', refreshProperties);
+EditorContext.on('transformChanged', refreshProperties);

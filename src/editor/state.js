@@ -36,9 +36,24 @@ export const EditorContext = {
   engineRef: null,
   sceneOrder: [],
   camera: { target: [0, 3, 0], yaw: 0.9, pitch: -0.5, distance: 26 },
-  refreshOutliner: () => {},
-  refreshProperties: () => {},
-  refreshOutlinerSelection: () => {},
+  _listeners: {},
+  /**
+   * Subscribe to an EditorContext event. Multiple listeners per event are
+   * supported (the whole point of this over the old single-callback
+   * EditorContext.refreshX = fn pattern from Fase 0-5).
+   * Events currently emitted: 'sceneMutated' (nodes added/removed/renamed —
+   * outliner list needs a full rebuild), 'selectionChanged' (which entities
+   * are selected changed — highlight + properties panel need refresh),
+   * 'transformChanged' (position/rotation/scale/color of the current
+   * selection changed — properties panel needs refresh, but not a full
+   * outliner rebuild).
+   */
+  on(event, handler) {
+    (this._listeners[event] ||= []).push(handler);
+  },
+  emit(event, payload) {
+    for (const handler of this._listeners[event] || []) handler(payload);
+  },
 };
 
 export const getSelection = () => query(world, [Selected]);

@@ -204,12 +204,12 @@ export function initCameraInput(canvas) {
             redo() {
                 for (const s of snapshots) writeTransform(s.eid, s.newT);
                 for (const s of snapshots) rebuildMesh(s.eid);
-                EditorContext.refreshProperties();
+                EditorContext.emit('transformChanged');
             },
             undo() {
                 for (const s of snapshots) writeTransform(s.eid, s.startT);
                 for (const s of snapshots) rebuildMesh(s.eid);
-                EditorContext.refreshProperties();
+                EditorContext.emit('transformChanged');
             }
         });
       } else {
@@ -217,7 +217,7 @@ export function initCameraInput(canvas) {
           writeTransform(st.eid, st.t);
           rebuildMesh(st.eid);
         }
-        EditorContext.refreshProperties();
+        EditorContext.emit('transformChanged');
       }
       gizmoDrag = null;
     } else if (inputMode === 'marquee') {

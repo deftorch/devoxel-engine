@@ -56,5 +56,5 @@ export function importScene(json) {
     idRemap.set(el.id, nd);
   }
   selectNode(-1);
-  EditorContext.refreshOutliner();
+  EditorContext.emit('sceneMutated');
 }

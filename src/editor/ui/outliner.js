@@ -69,3 +69,6 @@ export function refreshOutlinerSelection() {
     row.classList.toggle('selected', selection.includes(Number(row.dataset.eid)));
   });
 }
+
+EditorContext.on('sceneMutated', refreshOutliner);
+EditorContext.on('selectionChanged', refreshOutlinerSelection);
