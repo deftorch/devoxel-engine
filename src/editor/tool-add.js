@@ -13,10 +13,6 @@ export function hexToRgb01(hex) {
   return [((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255];
 }
 
-function snapVector(v) {
-  return [Math.round(v[0]), Math.round(v[1]), Math.round(v[2])];
-}
-
 export const AddToolState = {
   active: false,
   phase: 'HOVER', // 'HOVER', 'DRAW_BASE', 'EXTRUDE'
@@ -28,6 +24,10 @@ export const AddToolState = {
   targetPivot: [0, 0, 0], // display use; all actual math uses localNormal
   height: 1, // (always exactly axis-aligned) and targetPivot (the fixed
              // anchor point the de-rotation must pivot around).
+  baseUnitSize: 1, // adjustable via Ctrl+Scroll while Add mode is active.
+  extrudeStartScreenPos: [0, 0], // screen position when EXTRUDE phase began,
+                                  // used to require deliberate mouse movement
+                                  // before trusting the height computation.
 
   /** Inverse rotation matrix of the surface currently being drawn on. */
   targetRinv() {
@@ -46,8 +46,31 @@ export const AddToolState = {
     return mat3Apply(this.targetRinv(), vSub(worldPoint, this.targetPivot));
   },
 
+  /**
+   * Snaps a local-frame point to the placement grid. The axis aligned with
+   * localNormal (the flat plane being drawn on) is rounded to the nearest
+   * unit multiple - it's already an exact face coordinate in practice, so
+   * this is just float-noise cleanup. The two IN-PLANE axes are FLOORED to
+   * the nearest unit multiple below the point, not rounded to the nearest
+   * one: rounding was the root cause of the "drag starts one cell late"
+   * bug - a cursor anywhere in the second half of cell N (e.g. local x in
+   * [N+0.5, N+1)) would round to vertex N+1 instead of resolving to cell N,
+   * silently starting the drag one cell over from where the user was
+   * actually aiming. Flooring instead means EVERY point inside cell N
+   * consistently resolves to N, matching how block-placement tools
+   * (Minecraft etc.) resolve "which cell is under the cursor".
+   */
+  snapToCell(v) {
+    const unit = this.baseUnitSize;
+    return v.map((coord, i) => {
+      const onNormalAxis = Math.abs(this.localNormal[i]) > 0.5;
+      return onNormalAxis ? Math.round(coord / unit) * unit : Math.floor(coord / unit) * unit;
+    });
+  },
+
   getCubeTransform() {
     if (!this.startPoint || !this.currentPoint) return null;
+    const unit = this.baseUnitSize;
     let minX = Math.min(this.startPoint[0], this.currentPoint[0]);
     let maxX = Math.max(this.startPoint[0], this.currentPoint[0]);
     let minY = Math.min(this.startPoint[1], this.currentPoint[1]);
@@ -60,26 +83,32 @@ export const AddToolState = {
     // exact regardless of how the target is rotated in the world - unlike
     // thresholding the world-space normal, which can be diagonal (e.g.
     // [0.7,0,0.7] on a 45-degree-rotated target) and get misclassified.
+    //
+    // Both in-plane axes always get +unit added to their max, regardless of
+    // whether min===max: since startPoint/currentPoint are now FLOORED cell
+    // indices (see snapToCell), min/max represent an INCLUSIVE cell-index
+    // range that must always be converted to an EXCLUSIVE grid-line span by
+    // adding one unit to the far end - for a single cell (min===max) that's
+    // exactly the old "+1 if equal" behavior; for a multi-cell drag
+    // (min!==max) it now ALSO correctly includes the last dragged cell,
+    // which the old code silently failed to do (that mismatch, combined
+    // with the rounding bug above, is what produced the off-by-one).
     if (Math.abs(this.localNormal[0]) > 0.5) {
-      if (minY === maxY) maxY += 1;
-      if (minZ === maxZ) maxZ += 1;
+      maxY += unit;
+      maxZ += unit;
       if (this.height >= 0) maxX += this.height;
       else minX += this.height;
     } else if (Math.abs(this.localNormal[1]) > 0.5) {
-      if (minX === maxX) maxX += 1;
-      if (minZ === maxZ) maxZ += 1;
+      maxX += unit;
+      maxZ += unit;
       if (this.height >= 0) maxY += this.height;
       else minY += this.height;
     } else {
-      if (minX === maxX) maxX += 1;
-      if (minY === maxY) maxY += 1;
+      maxX += unit;
+      maxY += unit;
       if (this.height >= 0) maxZ += this.height;
       else minZ += this.height;
     }
-
-    if (maxX === minX) maxX += 1;
-    if (maxY === minY) maxY += 1;
-    if (maxZ === minZ) maxZ += 1;
 
     const sx = maxX - minX;
     const sy = maxY - minY;
@@ -120,6 +149,35 @@ export const AddToolState = {
 
 let lastMousePos = [0, 0];
 
+/**
+ * Updates the on-screen HUD showing the current base unit size, and (while
+ * actively drawing) the in-progress box dimensions. Kept simple/direct DOM
+ * writes here, colocated with the state it displays - same pattern as
+ * outliner.js/properties.js self-managing their own DOM.
+ */
+export function updateAddToolHud() {
+  const hud = document.getElementById('add-tool-hud');
+  if (!hud) return;
+  if (!AddToolState.active) {
+    hud.style.display = 'none';
+    return;
+  }
+  hud.style.display = 'block';
+  const unit = AddToolState.baseUnitSize;
+  if (AddToolState.phase === 'HOVER') {
+    hud.textContent = `Ukuran dasar: ${unit}×${unit}×${unit}  (Ctrl+Scroll untuk ubah, klik-kanan untuk batal)`;
+  } else {
+    const t = AddToolState.getCubeTransform();
+    if (t) {
+      hud.textContent = AddToolState.phase === 'DRAW_BASE'
+        ? `Alas: ${t.sx}×${t.sz}  (unit dasar ${unit})`
+        : `${t.sx}×${t.sy}×${t.sz}  (unit dasar ${unit}) — klik untuk selesai, klik-kanan untuk batal`;
+    }
+  }
+}
+
+const EXTRUDE_MOVE_THRESHOLD = 6; // px — below this, height stays at its last stable value rather than trusting a possibly near-parallel (numerically unstable) ray/axis-line intersection
+
 export function handleAddToolPointerMove(clientX, clientY, canvas) {
   if (!AddToolState.active) return false;
   lastMousePos = [clientX, clientY];
@@ -132,9 +190,9 @@ export function handleAddToolPointerMove(clientX, clientY, canvas) {
       AddToolState.targetRotation = hit.rotation;
       AddToolState.targetPivot = hit.pivot;
       const localPoint = AddToolState.worldToTarget(hit.point);
-      AddToolState.currentPoint = snapVector(localPoint);
+      AddToolState.currentPoint = AddToolState.snapToCell(localPoint);
       AddToolState.startPoint = AddToolState.currentPoint;
-      AddToolState.height = 1;
+      AddToolState.height = AddToolState.baseUnitSize;
     } else {
       AddToolState.currentPoint = null;
     }
@@ -144,21 +202,28 @@ export function handleAddToolPointerMove(clientX, clientY, canvas) {
     const rdLocal = mat3Apply(AddToolState.targetRinv(), rd);
     const planeHit = rayPlaneIntersect(roLocal, rdLocal, AddToolState.startPoint, AddToolState.localNormal);
     if (planeHit) {
-      AddToolState.currentPoint = snapVector(planeHit);
-      AddToolState.height = 1;
+      AddToolState.currentPoint = AddToolState.snapToCell(planeHit);
+      AddToolState.height = AddToolState.baseUnitSize;
     }
   } else if (AddToolState.phase === 'EXTRUDE') {
+    const movedSinceExtrudeStart = Math.hypot(clientX - AddToolState.extrudeStartScreenPos[0], clientY - AddToolState.extrudeStartScreenPos[1]);
+    if (movedSinceExtrudeStart < EXTRUDE_MOVE_THRESHOLD) {
+      updateAddToolHud();
+      return true; // not enough deliberate movement yet - keep height stable
+    }
     const { ro, rd } = screenToRay(clientX, clientY, canvas);
     const roLocal = AddToolState.worldToTarget(ro);
     const rdLocal = mat3Apply(AddToolState.targetRinv(), rd);
     // Project ray to the normal axis passing through startPoint
     const cp = closestParamsBetweenLines(AddToolState.startPoint, AddToolState.localNormal, roLocal, rdLocal);
     if (cp) {
-      let h = Math.round(cp.s);
-      if (h === 0) h = 1;
+      const unit = AddToolState.baseUnitSize;
+      let h = Math.round(cp.s / unit) * unit;
+      if (h === 0) h = unit;
       AddToolState.height = h;
     }
   }
+  updateAddToolHud();
   return true;
 }
 
@@ -174,9 +239,16 @@ export function handleAddToolPointerDown(clientX, clientY, canvas) {
     const t = AddToolState.getCubeTransform();
     if (t) finalizeCube(t);
     AddToolState.phase = 'HOVER';
+    updateAddToolHud();
     return true;
   }
   return false;
+}
+
+/** Cancels any in-progress DRAW_BASE/EXTRUDE placement without creating anything. */
+export function cancelAddTool() {
+  AddToolState.phase = 'HOVER';
+  updateAddToolHud();
 }
 
 export function handleAddToolPointerUp(clientX, clientY, canvas, isClick) {
@@ -184,20 +256,20 @@ export function handleAddToolPointerUp(clientX, clientY, canvas, isClick) {
   
   if (AddToolState.phase === 'DRAW_BASE') {
     if (isClick) {
-      // Just a click, spawn default size
-      AddToolState.currentPoint = vAdd(AddToolState.startPoint, [
-        Math.abs(AddToolState.localNormal[0]) > 0.5 ? 0 : 1,
-        Math.abs(AddToolState.localNormal[1]) > 0.5 ? 0 : 1,
-        Math.abs(AddToolState.localNormal[2]) > 0.5 ? 0 : 1
-      ]);
-      AddToolState.height = 1;
-      
+      // Just a click: startPoint === currentPoint already (no drag
+      // happened), and getCubeTransform() always adds +unit to the max
+      // extent on the two in-plane axes now, so a single default-size cell
+      // falls out automatically - no manual offset needed here anymore.
+      AddToolState.height = AddToolState.baseUnitSize;
       const t = AddToolState.getCubeTransform();
       finalizeCube(t);
       AddToolState.phase = 'HOVER';
+      updateAddToolHud();
     } else {
       // Move to extrude
       AddToolState.phase = 'EXTRUDE';
+      AddToolState.extrudeStartScreenPos = [clientX, clientY];
+      AddToolState.height = AddToolState.baseUnitSize;
     }
     return true;
   }

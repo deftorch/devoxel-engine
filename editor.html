@@ -131,6 +131,23 @@
         background: rgba(127, 212, 255, 0.12);
         pointer-events: none; /* never intercept mouse events meant for the canvas beneath it */
       }
+      #add-tool-hud {
+        display: none;
+        position: absolute;
+        left: 50%;
+        bottom: 14px;
+        transform: translateX(-50%);
+        z-index: 3;
+        padding: 6px 14px;
+        border-radius: 6px;
+        background: rgba(10, 16, 24, 0.85);
+        border: 1px solid rgba(127, 212, 255, 0.4);
+        color: #cfe8ff;
+        font-size: 12px;
+        font-family: monospace;
+        pointer-events: none;
+        white-space: nowrap;
+      }
 
       .panel-header {
         padding: 9px 12px;
@@ -363,6 +380,7 @@
         <div id="viewport-wrap">
           <canvas id="gpu-canvas"></canvas>
           <div id="marquee-box"></div>
+          <div id="add-tool-hud"></div>
           <div id="statusbar">
             <span><b>FPS</b> <span id="stat-fps">0</span></span>
             <span><b>Elemen</b> <span id="stat-count">0</span></span>

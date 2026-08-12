@@ -5,7 +5,7 @@ import { syncPropertyInputs } from "./ui/properties.js";
 import { GIZMO_AXES, gizmoArmLength } from "./geometry.js";
 import { pickAtScreen, frustumSelect } from "./picking.js";
 import History from "./history.js";
-import { handleAddToolPointerDown, handleAddToolPointerMove, handleAddToolPointerUp, AddToolState } from "./tool-add.js";
+import { handleAddToolPointerDown, handleAddToolPointerMove, handleAddToolPointerUp, cancelAddTool, updateAddToolHud, AddToolState } from "./tool-add.js";
 
 let gizmoMode = 'translate'; // 'translate' | 'rotate' | 'scale'
 export function getGizmoMode() { return AddToolState.active ? 'add' : gizmoMode; }
@@ -13,9 +13,11 @@ export function setGizmoMode(mode) {
   if (mode === 'translate' || mode === 'rotate' || mode === 'scale') {
     gizmoMode = mode;
     AddToolState.active = false;
+    updateAddToolHud();
   } else if (mode === 'add') {
     AddToolState.active = true;
     AddToolState.phase = 'HOVER';
+    updateAddToolHud();
   }
 }
 
@@ -201,6 +203,11 @@ export function initCameraInput(canvas) {
       e.preventDefault(); // stop the browser's native middle-click autoscroll cursor
       inputMode = 'orbit';
     } else if (e.button === 2) {
+      if (AddToolState.active && AddToolState.phase !== 'HOVER') {
+        cancelAddTool();
+        canvas.classList.remove('dragging');
+        return; // cancel only - don't also start a camera pan on this same click
+      }
       inputMode = 'pan';
     }
     canvas.classList.add('dragging');
@@ -379,6 +386,20 @@ export function initCameraInput(canvas) {
     'wheel',
     (e) => {
       e.preventDefault();
+      // Ctrl+Scroll while Add mode is active resizes the placement's base
+      // unit size instead of zooming the camera. Deliberately NOT bound to
+      // "S+Scroll" (as an alternative was suggested) - S is already the
+      // hotkey for switching to the Scale gizmo mode, and pressing S calls
+      // setGizmoMode('scale') which sets AddToolState.active = false
+      // immediately, exiting Add mode before a held S + scroll could ever
+      // register. Ctrl has no other binding anywhere in this file, so it's
+      // free to reuse here without colliding with anything else.
+      if (AddToolState.active && e.ctrlKey) {
+        const dir = e.deltaY > 0 ? -1 : 1;
+        AddToolState.baseUnitSize = Math.max(1, Math.min(16, AddToolState.baseUnitSize + dir));
+        updateAddToolHud();
+        return;
+      }
       EditorContext.camera.distance = Math.max(3, Math.min(120, EditorContext.camera.distance * (1 + e.deltaY * 0.001)));
     },
     { passive: false }
