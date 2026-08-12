@@ -44,7 +44,7 @@ export function rayAABBWithNormal(ro, rd, mn, mx) {
 
 export function raycastWorld(clientX, clientY, canvas) {
   const { ro, rd } = screenToRay(clientX, clientY, canvas);
-  let bestT = Infinity, bestEid = -1, bestNormal = null, bestHitPoint = null;
+  let bestT = Infinity, bestEid = -1, bestNormal = null, bestLocalNormal = null, bestHitPoint = null, bestRotation = [0, 0, 0];
   
   for (const eid of EditorContext.sceneOrder) {
     if (NodeMeta.isGroup[eid]) continue;
@@ -59,20 +59,34 @@ export function raycastWorld(clientX, clientY, canvas) {
     if (hit != null && hit.t < bestT) {
       bestT = hit.t;
       bestEid = eid;
+      // World-space normal, kept for callers that just want "which way does
+      // the surface face" without caring about the target's own orientation.
       bestNormal = mat3Apply(R, hit.normal);
+      // Local-space normal: exactly one of the six elementary +-X/+-Y/+-Z
+      // directions, ALWAYS, regardless of the target's rotation (it's a raw
+      // AABB face normal, computed before R is applied). Callers that need
+      // to classify "which axis is this face on" (like the add-cube tool's
+      // draw/extrude logic) must use this instead of the world-space normal
+      // - a rotated target's world normal can point diagonally (e.g.
+      // [0.7,0,0.7] for a 45-degree-rotated box), which a `> 0.5` threshold
+      // test would misclassify.
+      bestLocalNormal = hit.normal;
       bestHitPoint = vAdd(ro, vScale(rd, hit.t));
+      bestRotation = [t.rx, t.ry, t.rz];
     }
   }
   
   if (bestEid !== -1) {
-    return { eid: bestEid, t: bestT, normal: bestNormal, point: bestHitPoint };
+    return { eid: bestEid, t: bestT, normal: bestNormal, localNormal: bestLocalNormal, point: bestHitPoint, rotation: bestRotation };
   }
   
-  // Intersect with ground plane y=0 if no box hit
+  // Intersect with ground plane y=0 if no box hit. The ground is never
+  // rotated, so local space == world space here.
   if (Math.abs(rd[1]) > 1e-6) {
     const t = -ro[1] / rd[1];
     if (t > 0) {
-      return { eid: -1, t, normal: [0, 1, 0], point: vAdd(ro, vScale(rd, t)) };
+      const point = vAdd(ro, vScale(rd, t));
+      return { eid: -1, t, normal: [0, 1, 0], localNormal: [0, 1, 0], point, rotation: [0, 0, 0] };
     }
   }
   

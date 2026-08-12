@@ -1,4 +1,4 @@
-import { vAdd, vSub, vScale, vNorm, rayPlaneIntersect } from "../core/utils/math.js?v=2";
+import { vAdd, vSub, vScale, vNorm, rayPlaneIntersect, rotationMat3, mat3Transpose, mat3Apply } from "../core/utils/math.js?v=2";
 import { raycastWorld } from "./picking.js";
 import { screenToRay, closestParamsBetweenLines } from "./camera-input.js";
 import { createNodeRaw, destroyNodeRaw, selectNode } from "./scene-ops.js";
@@ -20,10 +20,21 @@ function snapVector(v) {
 export const AddToolState = {
   active: false,
   phase: 'HOVER', // 'HOVER', 'DRAW_BASE', 'EXTRUDE'
-  startPoint: null, 
-  currentPoint: null,
-  normal: [0, 1, 0],
-  height: 1,
+  startPoint: null, // all points/normals below are in the TARGET SURFACE's
+  currentPoint: null, // own local (de-rotated) frame, not world space - see
+  normal: [0, 1, 0], // targetRinv()/worldToTarget() below. `normal` is kept
+  localNormal: [0, 1, 0], // in world space only for potential future display use;
+  targetRotation: [0, 0, 0], // all actual math uses localNormal, which (unlike
+  height: 1, // the world normal) is always exactly axis-aligned.
+
+  /** Inverse rotation matrix of the surface currently being drawn on. */
+  targetRinv() {
+    return mat3Transpose(rotationMat3(...this.targetRotation));
+  },
+  /** World-space point -> the target surface's local (de-rotated) frame. */
+  worldToTarget(worldPoint) {
+    return mat3Apply(this.targetRinv(), worldPoint);
+  },
 
   getCubeTransform() {
     if (!this.startPoint || !this.currentPoint) return null;
@@ -34,12 +45,17 @@ export const AddToolState = {
     let minZ = Math.min(this.startPoint[2], this.currentPoint[2]);
     let maxZ = Math.max(this.startPoint[2], this.currentPoint[2]);
 
-    if (Math.abs(this.normal[0]) > 0.5) {
+    // localNormal is always exactly one of +-X/+-Y/+-Z (a raw AABB face
+    // normal from the target's own local space), so this classification is
+    // exact regardless of how the target is rotated in the world - unlike
+    // thresholding the world-space normal, which can be diagonal (e.g.
+    // [0.7,0,0.7] on a 45-degree-rotated target) and get misclassified.
+    if (Math.abs(this.localNormal[0]) > 0.5) {
       if (minY === maxY) maxY += 1;
       if (minZ === maxZ) maxZ += 1;
       if (this.height >= 0) maxX += this.height;
       else minX += this.height;
-    } else if (Math.abs(this.normal[1]) > 0.5) {
+    } else if (Math.abs(this.localNormal[1]) > 0.5) {
       if (minX === maxX) maxX += 1;
       if (minZ === maxZ) maxZ += 1;
       if (this.height >= 0) maxY += this.height;
@@ -64,11 +80,19 @@ export const AddToolState = {
 
     const [r, g, b] = hexToRgb01(PALETTE[paletteIdx % PALETTE.length]);
 
+    // ox/oy/oz/px/py/pz above were computed entirely in the target's local
+    // (de-rotated) frame - exactly the same numbers buildCubeMesh's corner
+    // formula expects for an unrotated box. Attaching the target's own
+    // rotation here is enough to make the new box parallel to the face it
+    // was drawn on: worldCorner = R*((ox+lx)-px, ...) + px,py,pz, and since
+    // (ox+lx)-px is a pure local-frame difference, R correctly carries it
+    // into the target's true world orientation. No other math needs to
+    // change for this to work.
     return {
       ox: minX, oy: minY, oz: minZ,
       sx, sy, sz,
       px, py, pz,
-      rx: 0, ry: 0, rz: 0,
+      rx: this.targetRotation[0], ry: this.targetRotation[1], rz: this.targetRotation[2],
       r, g, b
     };
   }
@@ -84,7 +108,10 @@ export function handleAddToolPointerMove(clientX, clientY, canvas) {
     const hit = raycastWorld(clientX, clientY, canvas);
     if (hit) {
       AddToolState.normal = hit.normal;
-      AddToolState.currentPoint = snapVector(hit.point);
+      AddToolState.localNormal = hit.localNormal;
+      AddToolState.targetRotation = hit.rotation;
+      const localPoint = AddToolState.worldToTarget(hit.point);
+      AddToolState.currentPoint = snapVector(localPoint);
       AddToolState.startPoint = AddToolState.currentPoint;
       AddToolState.height = 1;
     } else {
@@ -92,15 +119,21 @@ export function handleAddToolPointerMove(clientX, clientY, canvas) {
     }
   } else if (AddToolState.phase === 'DRAW_BASE') {
     const { ro, rd } = screenToRay(clientX, clientY, canvas);
-    const planeHit = rayPlaneIntersect(ro, rd, AddToolState.startPoint, AddToolState.normal);
+    const Rinv = AddToolState.targetRinv();
+    const roLocal = mat3Apply(Rinv, ro);
+    const rdLocal = mat3Apply(Rinv, rd);
+    const planeHit = rayPlaneIntersect(roLocal, rdLocal, AddToolState.startPoint, AddToolState.localNormal);
     if (planeHit) {
       AddToolState.currentPoint = snapVector(planeHit);
       AddToolState.height = 1;
     }
   } else if (AddToolState.phase === 'EXTRUDE') {
     const { ro, rd } = screenToRay(clientX, clientY, canvas);
+    const Rinv = AddToolState.targetRinv();
+    const roLocal = mat3Apply(Rinv, ro);
+    const rdLocal = mat3Apply(Rinv, rd);
     // Project ray to the normal axis passing through startPoint
-    const cp = closestParamsBetweenLines(AddToolState.startPoint, AddToolState.normal, ro, rd);
+    const cp = closestParamsBetweenLines(AddToolState.startPoint, AddToolState.localNormal, roLocal, rdLocal);
     if (cp) {
       let h = Math.round(cp.s);
       if (h === 0) h = 1;
@@ -134,9 +167,9 @@ export function handleAddToolPointerUp(clientX, clientY, canvas, isClick) {
     if (isClick) {
       // Just a click, spawn default size
       AddToolState.currentPoint = vAdd(AddToolState.startPoint, [
-        Math.abs(AddToolState.normal[0]) > 0.5 ? 0 : 1,
-        Math.abs(AddToolState.normal[1]) > 0.5 ? 0 : 1,
-        Math.abs(AddToolState.normal[2]) > 0.5 ? 0 : 1
+        Math.abs(AddToolState.localNormal[0]) > 0.5 ? 0 : 1,
+        Math.abs(AddToolState.localNormal[1]) > 0.5 ? 0 : 1,
+        Math.abs(AddToolState.localNormal[2]) > 0.5 ? 0 : 1
       ]);
       AddToolState.height = 1;
       
