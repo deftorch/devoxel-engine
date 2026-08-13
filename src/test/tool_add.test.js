@@ -50,16 +50,26 @@ describe('tool-add.js — getCubeTransform', () => {
     AddToolState.localNormal = [0, 1, 0];
     AddToolState.height = 1;
     AddToolState.baseUnitSize = 1;
-    AddToolState.targetRotation = [0, Math.PI / 4, 0]; // Rotasi 45 derajat di Y
+    // rotationMat3()/Transform.rx-ry-rz menggunakan satuan DERAJAT di
+    // seluruh codebase ini (lihat picking.js: rotationMat3(t.rx, t.ry, t.rz)
+    // dibaca langsung dari Transform ECS component) - jadi 45 derajat di
+    // sini harus ditulis literal `45`, BUKAN `Math.PI / 4` (yang adalah
+    // representasi radian dari 45 derajat, dan kalau diteruskan ke fungsi
+    // yang mengharapkan derajat hanya menghasilkan rotasi ~0.785 derajat).
+    AddToolState.targetRotation = [0, 45, 0]; // Rotasi 45 derajat di Y
     AddToolState.targetPivot = [10, 0, 6];
 
     const t = AddToolState.getCubeTransform();
     // Centroid lokal awal: Lpx = 0.5, Lpy = 0.5, Lpz = 0.5
-    // Pivot harus bereaksi terhadap rotasi tersebut dengan poros [10, 0, 6]
+    // Pivot harus bereaksi terhadap rotasi tersebut dengan poros [10, 0, 6].
+    // Nilai referensi (0.5*cos45 + 0.5*sin45 = 0.70710678...) dihitung
+    // manual dan diverifikasi lewat mat3Apply(rotationMat3(0,45,0), ...).
     assert.equal(t.rx, 0);
-    assert.equal(t.ry, Math.PI / 4);
+    assert.equal(t.ry, 45);
     assert.equal(t.rz, 0);
-    assert.ok(Math.abs(t.px - 10.353553) < 0.001 || Math.abs(t.px - 10.707) < 0.001 || t.px !== 10, 'px tidak boleh tetap di titik asli jika kena rotasi centroid');
+    assert.ok(Math.abs(t.px - 10.70710678) < 1e-6, `px harus 10.7071..., dapat ${t.px}`);
+    assert.ok(Math.abs(t.py - 0.5) < 1e-6, `py harus 0.5, dapat ${t.py}`);
+    assert.ok(Math.abs(t.pz - 6) < 1e-6, `pz harus tetap 6 (offset Z nol di rotasi 45° murni Y), dapat ${t.pz}`);
   });
 
   test('Target axis-aligned / ground plane - konsistensi hasil', () => {

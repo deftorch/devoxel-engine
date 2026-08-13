@@ -10,9 +10,16 @@ const settings = loadAddToolSettings();
 let PALETTE = settings.palette;
 let paletteIdx = 0;
 
-/** Current palette (read-only view for the settings UI to render swatches from). */
+/**
+ * Current palette (read-only view for the settings UI to render swatches
+ * from). Returns a COPY, not the live internal array - callers must go
+ * through setPalette() to mutate, which also persists + resets the cycle
+ * index. Returning the live reference previously would've let a caller
+ * mutate internal state without triggering persistence, silently
+ * desyncing localStorage from what's actually in use.
+ */
 export function getPalette() {
-  return PALETTE;
+  return [...PALETTE];
 }
 /** Replaces the palette (from the settings UI), persists it, and resets the cycle index so the next cube starts from PALETTE[0]. */
 export function setPalette(colors) {
