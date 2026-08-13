@@ -4,9 +4,29 @@ import { screenToRay, closestParamsBetweenLines } from "./camera-input.js";
 import { createNodeRaw, destroyNodeRaw, selectNode } from "./scene-ops.js";
 import { getPrimarySelection, NodeMeta, EditorContext } from "./state.js";
 import History from "./history.js";
+import { loadAddToolSettings, saveAddToolSettings, DEFAULT_PALETTE, DEFAULT_UNIT_SIZE } from "./settings.js";
 
-const PALETTE = ['#7fd4ff', '#ffb27f', '#b6ff7f', '#ff7fd4', '#7fffcf', '#d4ff7f', '#ff9f7f', '#9f7fff'];
+const settings = loadAddToolSettings();
+let PALETTE = settings.palette;
 let paletteIdx = 0;
+
+/** Current palette (read-only view for the settings UI to render swatches from). */
+export function getPalette() {
+  return PALETTE;
+}
+/** Replaces the palette (from the settings UI), persists it, and resets the cycle index so the next cube starts from PALETTE[0]. */
+export function setPalette(colors) {
+  PALETTE = colors.length > 0 ? colors : [...DEFAULT_PALETTE];
+  paletteIdx = 0;
+  saveAddToolSettings({ unitSize: AddToolState.baseUnitSize, palette: PALETTE });
+}
+export function resetAddToolSettingsToDefault() {
+  PALETTE = [...DEFAULT_PALETTE];
+  paletteIdx = 0;
+  AddToolState.baseUnitSize = DEFAULT_UNIT_SIZE;
+  saveAddToolSettings({ unitSize: DEFAULT_UNIT_SIZE, palette: PALETTE });
+  updateAddToolHud();
+}
 
 export function hexToRgb01(hex) {
   const v = parseInt(hex.slice(1), 16);
@@ -24,7 +44,7 @@ export const AddToolState = {
   targetPivot: [0, 0, 0], // display use; all actual math uses localNormal
   height: 1, // (always exactly axis-aligned) and targetPivot (the fixed
              // anchor point the de-rotation must pivot around).
-  baseUnitSize: 1, // adjustable via Ctrl+Scroll while Add mode is active.
+  baseUnitSize: settings.unitSize, // adjustable via Ctrl+Scroll while Add mode is active; persisted (settings.js).
   extrudeStartScreenPos: [0, 0], // screen position when EXTRUDE phase began,
                                   // used to require deliberate mouse movement
                                   // before trusting the height computation.

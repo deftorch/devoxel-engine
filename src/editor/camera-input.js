@@ -5,7 +5,8 @@ import { syncPropertyInputs } from "./ui/properties.js";
 import { GIZMO_AXES, gizmoArmLength } from "./geometry.js";
 import { pickAtScreen, frustumSelect } from "./picking.js";
 import History from "./history.js";
-import { handleAddToolPointerDown, handleAddToolPointerMove, handleAddToolPointerUp, cancelAddTool, updateAddToolHud, AddToolState } from "./tool-add.js";
+import { handleAddToolPointerDown, handleAddToolPointerMove, handleAddToolPointerUp, cancelAddTool, updateAddToolHud, getPalette, AddToolState } from "./tool-add.js";
+import { saveAddToolSettings } from "./settings.js";
 
 let gizmoMode = 'translate'; // 'translate' | 'rotate' | 'scale'
 export function getGizmoMode() { return AddToolState.active ? 'add' : gizmoMode; }
@@ -397,6 +398,8 @@ export function initCameraInput(canvas) {
       if (AddToolState.active && e.ctrlKey) {
         const dir = e.deltaY > 0 ? -1 : 1;
         AddToolState.baseUnitSize = Math.max(1, Math.min(16, AddToolState.baseUnitSize + dir));
+        saveAddToolSettings({ unitSize: AddToolState.baseUnitSize, palette: getPalette() });
+        EditorContext.emit('addToolSettingsChanged');
         updateAddToolHud();
         return;
       }

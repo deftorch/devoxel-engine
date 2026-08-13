@@ -148,6 +148,111 @@
         pointer-events: none;
         white-space: nowrap;
       }
+      #add-tool-settings-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #add-tool-settings-backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(5, 8, 12, 0.6);
+      }
+      #add-tool-settings-panel {
+        position: relative;
+        background: #0e1520;
+        border: 1px solid rgba(127, 212, 255, 0.3);
+        border-radius: 10px;
+        padding: 16px 18px;
+        width: 320px;
+        color: #cfe8ff;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+      }
+      #add-tool-settings-panel .panel-header {
+        margin-bottom: 12px;
+      }
+      .settings-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin: 10px 0;
+        font-size: 12px;
+      }
+      .settings-row input[type='number'] {
+        width: 60px;
+        background: #141b26;
+        color: #cfe8ff;
+        border: 1px solid rgba(120, 170, 255, 0.25);
+        border-radius: 4px;
+        padding: 4px 6px;
+        font-size: 12px;
+      }
+      #settings-palette-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        max-width: 190px;
+      }
+      .palette-swatch-wrap {
+        position: relative;
+        width: 26px;
+        height: 26px;
+      }
+      .palette-swatch-wrap input[type='color'] {
+        width: 26px;
+        height: 26px;
+        padding: 0;
+        border: 1px solid rgba(120, 170, 255, 0.4);
+        border-radius: 5px;
+        background: none;
+        cursor: pointer;
+      }
+      .palette-swatch-remove {
+        position: absolute;
+        top: -6px;
+        right: -6px;
+        width: 15px;
+        height: 15px;
+        line-height: 13px;
+        text-align: center;
+        border-radius: 50%;
+        background: #ff6060;
+        color: #fff;
+        font-size: 10px;
+        cursor: pointer;
+        border: 1px solid #0e1520;
+      }
+      #settings-palette-add {
+        margin-top: 4px;
+        font-size: 11px;
+        padding: 4px 8px;
+      }
+      .settings-actions {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 16px;
+        gap: 8px;
+      }
+      #add-tool-settings-panel button {
+        background: #141b26;
+        color: #cfe8ff;
+        border: 1px solid rgba(120, 170, 255, 0.2);
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      #add-tool-settings-panel button:hover {
+        background: #1c2635;
+        border-color: rgba(120, 170, 255, 0.45);
+      }
+      .settings-actions button {
+        flex: 1;
+      }
 
       .panel-header {
         padding: 9px 12px;
@@ -354,6 +459,7 @@
         <button id="btn-gizmo-translate" title="Translate (G)" class="gizmo-mode-active">↔ Move</button>
         <button id="btn-gizmo-rotate" title="Rotate (R)">↻ Rotate</button>
         <button id="btn-gizmo-scale" title="Scale (S)">⇲ Scale</button>
+        <button id="btn-add-tool-settings" title="Pengaturan Add Tool">⚙ Add Tool</button>
         <div class="sep"></div>
         <button id="btn-undo" disabled>↶ Undo</button>
         <button id="btn-redo" disabled>↷ Redo</button>
@@ -397,6 +503,29 @@
           <div id="properties-body">
             <div id="properties-empty">Tidak ada elemen terpilih.<br />Tambahkan cube dari toolbar.</div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="add-tool-settings-modal" class="hidden">
+      <div id="add-tool-settings-backdrop"></div>
+      <div id="add-tool-settings-panel">
+        <div class="panel-header">Pengaturan Add Tool</div>
+
+        <label class="settings-row">
+          <span>Ukuran unit dasar</span>
+          <input type="number" id="settings-unit-size" min="1" max="16" step="1" />
+        </label>
+
+        <div class="settings-row" style="align-items: flex-start">
+          <span>Palet warna kubus</span>
+          <div id="settings-palette-list"></div>
+        </div>
+        <button id="settings-palette-add" type="button">+ Tambah Warna</button>
+
+        <div class="settings-actions">
+          <button id="settings-reset" type="button">Reset ke Default</button>
+          <button id="settings-close" type="button">Tutup</button>
         </div>
       </div>
     </div>

@@ -8,6 +8,7 @@ import { AddToolState } from "./tool-add.js";
 import { uploadMesh, rebuildMesh, readTransform, writeTransform, hexToRgb01, rgb01ToHex, addCube, addGroup, deleteSelected, duplicateSelected, renameNode, commitTransform, selectNode, getVirtualPivot } from "./scene-ops.js";
 import { refreshOutliner } from "./ui/outliner.js";
 import { syncPropertyInputs } from "./ui/properties.js";
+import { initAddToolSettingsPanel } from "./ui/add-tool-settings.js";
 import { cameraBasis, getFovY, initCameraInput, getGizmoMode, setGizmoMode } from "./camera-input.js";
 import { exportScene, importScene } from "./io.js";
 import { vAdd, vSub, vScale, vCross, vDot, vNorm, rotationMat3, mat3Apply, mat4Perspective, mat4LookAt, mat4Multiply } from "../core/utils/math.js?v=2";
@@ -140,6 +141,7 @@ function setGizmoModeAndSync(mode) {
 $('btn-gizmo-translate').addEventListener('click', () => setGizmoModeAndSync('translate'));
 $('btn-gizmo-rotate').addEventListener('click', () => setGizmoModeAndSync('rotate'));
 $('btn-gizmo-scale').addEventListener('click', () => setGizmoModeAndSync('scale'));
+initAddToolSettingsPanel();
 $('btn-import').addEventListener('click', () => $('file-import').click());
 $('file-import').addEventListener('change', (e) => {
   const file = e.target.files[0];
