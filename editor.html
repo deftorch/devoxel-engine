@@ -191,6 +191,24 @@
         padding: 4px 6px;
         font-size: 12px;
       }
+      .settings-row input[type='checkbox'] {
+        width: 16px;
+        height: 16px;
+        accent-color: #7fd4ff;
+      }
+      .settings-hint {
+        margin: -4px 0 10px 0;
+        font-size: 11px;
+        line-height: 1.5;
+        color: #7f9bb8;
+      }
+      .settings-hint kbd {
+        background: #141b26;
+        border: 1px solid rgba(120, 170, 255, 0.25);
+        border-radius: 3px;
+        padding: 1px 4px;
+        font-size: 10px;
+      }
       #settings-palette-list {
         display: flex;
         flex-wrap: wrap;
@@ -451,7 +469,7 @@
             </button>
         </a>
         <div class="sep"></div>
-        <button id="btn-add-cube" title="Add new block (A)">+ Cube</button>
+        <button id="btn-add-cube" title="Aktifkan Add Tool (gambar/drag di permukaan) — Shift+A: tambah kubus instan dari mode manapun">+ Cube</button>
         <button id="btn-add-group">＋ Group</button>
         <button id="btn-duplicate" disabled>⧉ Duplicate</button>
         <button id="btn-delete" disabled>✕ Delete</button>
@@ -513,9 +531,15 @@
         <div class="panel-header">Pengaturan Add Tool</div>
 
         <label class="settings-row">
-          <span>Ukuran unit dasar</span>
+          <span>Ukuran unit dasar (jarak snap)</span>
           <input type="number" id="settings-unit-size" min="1" max="16" step="1" />
         </label>
+
+        <label class="settings-row">
+          <span>Snap ke grid saat drag</span>
+          <input type="checkbox" id="settings-snap-enabled" />
+        </label>
+        <p class="settings-hint">Nonaktifkan untuk menggambar kotak bebas (ukuran &amp; posisi non-kelipatan unit, termasuk persegi panjang non-persegi). Tahan <kbd>Ctrl</kbd> saat drag untuk membalik sementara tanpa mengubah setelan ini.</p>
 
         <div class="settings-row" style="align-items: flex-start">
           <span>Palet warna kubus</span>

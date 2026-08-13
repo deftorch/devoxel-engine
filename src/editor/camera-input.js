@@ -271,7 +271,7 @@ export function initCameraInput(canvas) {
 
   window.addEventListener('mousemove', (e) => {
     if (AddToolState.active && inputMode !== 'orbit' && inputMode !== 'pan') {
-       handleAddToolPointerMove(e.clientX, e.clientY, canvas);
+       handleAddToolPointerMove(e.clientX, e.clientY, canvas, e.ctrlKey);
        if (inputMode === 'add_tool') {
            lastMouse = [e.clientX, e.clientY];
            return;

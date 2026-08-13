@@ -1,6 +1,6 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { AddToolState, setPalette, getPalette, resetAddToolSettingsToDefault, handleAddToolPointerMove, handleAddToolPointerUp } from '../editor/tool-add.js';
+import { AddToolState, setPalette, getPalette, resetAddToolSettingsToDefault, handleAddToolPointerMove, handleAddToolPointerUp, spawnInstantCube, setSnapEnabled } from '../editor/tool-add.js';
 import { loadAddToolSettings, saveAddToolSettings, DEFAULT_PALETTE } from '../editor/settings.js';
 import { rayAABBWithNormal } from '../editor/picking.js';
 import History from '../editor/history.js';
@@ -91,6 +91,85 @@ describe('tool-add.js — getCubeTransform', () => {
     assert.equal(t.px, 0.5);
     assert.equal(t.py, 0.5);
     assert.equal(t.pz, 0.5);
+  });
+});
+
+describe('tool-add.js — snap bebas (snapEnabled=false)', () => {
+  afterEach(() => {
+    AddToolState.snapEnabled = true; // reset ke default agar tidak bocor ke describe block lain
+  });
+
+  test('drag bebas menghasilkan ukuran non-integer & non-persegi (bukan dipaksa kelipatan unit)', () => {
+    AddToolState.snapEnabled = false;
+    AddToolState.startPoint = [0.2, 0, 0.4];
+    AddToolState.currentPoint = [2.75, 0, 1.1];
+    AddToolState.localNormal = [0, 1, 0];
+    AddToolState.height = 0.83;
+    AddToolState.baseUnitSize = 1;
+    AddToolState.targetRotation = [0, 0, 0];
+    AddToolState.targetPivot = [0, 0, 0];
+
+    const t = AddToolState.getCubeTransform();
+    assert.ok(Math.abs(t.sx - 2.55) < 1e-9, `sx harus 2.55 (2.75-0.2) tanpa padding unit, dapat ${t.sx}`);
+    assert.ok(Math.abs(t.sz - 0.7) < 1e-9, `sz harus 0.7 (1.1-0.4), dapat ${t.sz}`);
+    assert.ok(Math.abs(t.sy - 0.83) < 1e-9, `sy harus = height apa adanya, dapat ${t.sy}`);
+    assert.notEqual(t.sx, t.sz, 'harus bisa menghasilkan bentuk non-persegi (sx != sz)');
+  });
+
+  test('klik tanpa drag tetap menghasilkan kubus default 1 unit walau snap OFF', () => {
+    AddToolState.snapEnabled = false;
+    AddToolState.startPoint = [1.23, 0, 4.56];
+    AddToolState.currentPoint = [1.23, 0, 4.56]; // titik sama = klik, bukan drag
+    AddToolState.localNormal = [0, 1, 0];
+    AddToolState.height = 1;
+    AddToolState.baseUnitSize = 1;
+    AddToolState.targetRotation = [0, 0, 0];
+    AddToolState.targetPivot = [0, 0, 0];
+
+    const t = AddToolState.getCubeTransform();
+    assert.equal(t.sx, 1, 'klik tanpa drag harus tetap fallback ke ukuran default unit, bukan 0');
+    assert.equal(t.sz, 1);
+  });
+
+  test('resolvePoint: snap=true tetap pakai snapToCell (backward compatible)', () => {
+    AddToolState.baseUnitSize = 1;
+    AddToolState.localNormal = [0, 1, 0];
+    const p = AddToolState.resolvePoint([1.7, 0.5, 0.2], true);
+    assert.deepEqual(p, [1, 1, 0]);
+  });
+
+  test('resolvePoint: snap=false tidak membulatkan ke grid, hanya bersihkan noise desimal', () => {
+    const p = AddToolState.resolvePoint([1.23456, 0.5, 0.98765], false);
+    assert.deepEqual(p, [1.235, 0.5, 0.988]);
+  });
+
+  test('setSnapEnabled mengubah AddToolState.snapEnabled', () => {
+    setSnapEnabled(false);
+    assert.equal(AddToolState.snapEnabled, false);
+    setSnapEnabled(true);
+    assert.equal(AddToolState.snapEnabled, true);
+  });
+});
+
+describe('tool-add.js — spawnInstantCube (Shift+A)', () => {
+  beforeEach(() => {
+    History.undoStack = [];
+    History.redoStack = [];
+  });
+
+  test('membuat kubus langsung di camera.target tanpa perlu Add mode aktif', () => {
+    AddToolState.active = false; // sengaja OFF - instant add harus bekerja dari mode manapun
+    AddToolState.baseUnitSize = 2;
+    EditorContext.camera.target = [5, 3, -1];
+
+    const initialSceneCount = EditorContext.sceneOrder.length;
+    spawnInstantCube();
+
+    assert.equal(EditorContext.sceneOrder.length, initialSceneCount + 1, 'entity harus benar-benar dibuat');
+    assert.equal(History.undoStack[History.undoStack.length - 1].label, 'Add Box (Draw)');
+
+    History.undo();
+    assert.equal(EditorContext.sceneOrder.length, initialSceneCount, 'undo() harus menghapus kubus instan juga');
   });
 });
 

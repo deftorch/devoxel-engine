@@ -1,9 +1,13 @@
 import { EditorContext } from "../state.js";
-import { AddToolState, getPalette, setPalette, resetAddToolSettingsToDefault } from "../tool-add.js";
+import { AddToolState, getPalette, setPalette, resetAddToolSettingsToDefault, setSnapEnabled } from "../tool-add.js";
 import { saveAddToolSettings } from "../settings.js";
 
 function persist() {
-  saveAddToolSettings({ unitSize: AddToolState.baseUnitSize, palette: getPalette() });
+  // Always include snapEnabled here - sanitize() falls back to the
+  // DEFAULT when a field is omitted, so leaving it out would silently
+  // reset the persisted snap preference back to default every time the
+  // unit size or palette changes from this panel.
+  saveAddToolSettings({ unitSize: AddToolState.baseUnitSize, palette: getPalette(), snapEnabled: AddToolState.snapEnabled });
 }
 
 function renderPaletteSwatches() {
@@ -50,6 +54,11 @@ function syncUnitSizeInput() {
   if (input && document.activeElement !== input) input.value = AddToolState.baseUnitSize;
 }
 
+function syncSnapCheckbox() {
+  const checkbox = document.getElementById('settings-snap-enabled');
+  if (checkbox) checkbox.checked = AddToolState.snapEnabled;
+}
+
 export function initAddToolSettingsPanel() {
   const modal = document.getElementById('add-tool-settings-modal');
   const openBtn = document.getElementById('btn-add-tool-settings');
@@ -58,9 +67,11 @@ export function initAddToolSettingsPanel() {
   const resetBtn = document.getElementById('settings-reset');
   const addColorBtn = document.getElementById('settings-palette-add');
   const unitInput = document.getElementById('settings-unit-size');
+  const snapCheckbox = document.getElementById('settings-snap-enabled');
 
   function open() {
     syncUnitSizeInput();
+    syncSnapCheckbox();
     renderPaletteSwatches();
     modal.classList.remove('hidden');
   }
@@ -82,6 +93,12 @@ export function initAddToolSettingsPanel() {
     persist();
   });
 
+  if (snapCheckbox) {
+    snapCheckbox.addEventListener('change', () => {
+      setSnapEnabled(snapCheckbox.checked);
+    });
+  }
+
   addColorBtn.addEventListener('click', () => {
     setPalette([...getPalette(), '#ffffff']);
     renderPaletteSwatches();
@@ -90,6 +107,7 @@ export function initAddToolSettingsPanel() {
   resetBtn.addEventListener('click', () => {
     resetAddToolSettingsToDefault();
     syncUnitSizeInput();
+    syncSnapCheckbox();
     renderPaletteSwatches();
   });
 

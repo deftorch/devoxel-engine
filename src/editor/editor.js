@@ -4,7 +4,7 @@ import { VoxelEngine } from "../core/index.js";
 import { Transform, ColorComp, NodeMeta, NameComp, EditorContext, getSelection, getPrimarySelection } from "./state.js";
 import History from "./history.js";
 import { buildCubeMesh, buildGridLines, interleaveLine, buildOutlineForEid, buildOutlineForTransform, buildGizmoGeometry, buildRotateGizmoGeometry, buildScaleGizmoGeometry, gizmoArmLength, GIZMO_AXES } from "./geometry.js";
-import { AddToolState } from "./tool-add.js";
+import { AddToolState, spawnInstantCube } from "./tool-add.js";
 import { uploadMesh, rebuildMesh, readTransform, writeTransform, hexToRgb01, rgb01ToHex, addCube, addGroup, deleteSelected, duplicateSelected, renameNode, commitTransform, selectNode, getVirtualPivot } from "./scene-ops.js";
 import { refreshOutliner } from "./ui/outliner.js";
 import { syncPropertyInputs } from "./ui/properties.js";
@@ -180,6 +180,14 @@ window.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.key.toLowerCase() === 'd') {
     e.preventDefault();
     duplicateSelected();
+  }
+  // Blender-style instant add: works from ANY mode (doesn't require
+  // switching into Add mode / hovering a surface first) - spawns a
+  // default-size cube at the camera's orbit target, same role as
+  // Blender's "3D Cursor" as the implicit spawn point.
+  if (!e.ctrlKey && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'a') {
+    e.preventDefault();
+    spawnInstantCube();
   }
   if (!e.ctrlKey && !e.shiftKey && !e.altKey) {
     const key = e.key.toLowerCase();

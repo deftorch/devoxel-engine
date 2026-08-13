@@ -4,7 +4,7 @@ import { screenToRay, closestParamsBetweenLines } from "./camera-input.js";
 import { createNodeRaw, destroyNodeRaw, selectNode } from "./scene-ops.js";
 import { getPrimarySelection, NodeMeta, EditorContext } from "./state.js";
 import History from "./history.js";
-import { loadAddToolSettings, saveAddToolSettings, DEFAULT_PALETTE, DEFAULT_UNIT_SIZE } from "./settings.js";
+import { loadAddToolSettings, saveAddToolSettings, DEFAULT_PALETTE, DEFAULT_UNIT_SIZE, DEFAULT_SNAP_ENABLED } from "./settings.js";
 
 const settings = loadAddToolSettings();
 let PALETTE = settings.palette;
@@ -31,7 +31,20 @@ export function resetAddToolSettingsToDefault() {
   PALETTE = [...DEFAULT_PALETTE];
   paletteIdx = 0;
   AddToolState.baseUnitSize = DEFAULT_UNIT_SIZE;
-  saveAddToolSettings({ unitSize: DEFAULT_UNIT_SIZE, palette: PALETTE });
+  AddToolState.snapEnabled = DEFAULT_SNAP_ENABLED;
+  saveAddToolSettings({ unitSize: DEFAULT_UNIT_SIZE, palette: PALETTE, snapEnabled: DEFAULT_SNAP_ENABLED });
+  updateAddToolHud();
+}
+
+/**
+ * Toggles the persisted default snap state (from the settings panel
+ * checkbox). Separate from the transient per-drag Ctrl-hold inversion in
+ * handleAddToolPointerMove - this changes what snapping defaults to when
+ * Ctrl ISN'T held, not a one-off override.
+ */
+export function setSnapEnabled(enabled) {
+  AddToolState.snapEnabled = !!enabled;
+  saveAddToolSettings({ unitSize: AddToolState.baseUnitSize, palette: PALETTE, snapEnabled: AddToolState.snapEnabled });
   updateAddToolHud();
 }
 
@@ -55,6 +68,12 @@ export const AddToolState = {
   extrudeStartScreenPos: [0, 0], // screen position when EXTRUDE phase began,
                                   // used to require deliberate mouse movement
                                   // before trusting the height computation.
+  snapEnabled: settings.snapEnabled, // when true, drag/extrude snap to
+    // baseUnitSize increments (old behavior). When false, dimensions are
+    // free/continuous - the user can draw non-square, non-integer-sized
+    // boxes. Holding Ctrl while dragging temporarily INVERTS this for that
+    // drag only (see handleAddToolPointerMove) without changing the
+    // persisted default.
 
   /** Inverse rotation matrix of the surface currently being drawn on. */
   targetRinv() {
@@ -95,6 +114,20 @@ export const AddToolState = {
     });
   },
 
+  /**
+   * Resolves a raw local-frame point to what actually gets stored as
+   * startPoint/currentPoint, depending on whether snapping applies for
+   * this interaction. `snap=true` keeps the old grid-cell behavior
+   * (snapToCell). `snap=false` skips grid snapping entirely and just
+   * rounds to 3 decimals to kill float noise - so drags/extrudes can land
+   * on ANY size and any position, not just unit multiples, enabling
+   * non-square/non-integer boxes.
+   */
+  resolvePoint(localPoint, snap) {
+    if (snap) return this.snapToCell(localPoint);
+    return localPoint.map(v => Math.round(v * 1000) / 1000);
+  },
+
   getCubeTransform() {
     if (!this.startPoint || !this.currentPoint) return null;
     const unit = this.baseUnitSize;
@@ -105,34 +138,40 @@ export const AddToolState = {
     let minZ = Math.min(this.startPoint[2], this.currentPoint[2]);
     let maxZ = Math.max(this.startPoint[2], this.currentPoint[2]);
 
+    // A plain click (no drag at all) always lands here with
+    // startPoint===currentPoint exactly, regardless of snap mode - the two
+    // points were assigned from the very same HOVER-phase value and never
+    // diverged. Universally treat that as "give me one default-size box"
+    // (same as the old always-snapped behavior), rather than a literal
+    // zero-size box, whether or not snapping is on for the drag itself.
+    const isPointClick = minX === maxX && minY === maxY && minZ === maxZ;
+    const padWithUnit = this.snapEnabled || isPointClick;
+
     // localNormal is always exactly one of +-X/+-Y/+-Z (a raw AABB face
     // normal from the target's own local space), so this classification is
     // exact regardless of how the target is rotated in the world - unlike
     // thresholding the world-space normal, which can be diagonal (e.g.
     // [0.7,0,0.7] on a 45-degree-rotated target) and get misclassified.
     //
-    // Both in-plane axes always get +unit added to their max, regardless of
-    // whether min===max: since startPoint/currentPoint are now FLOORED cell
-    // indices (see snapToCell), min/max represent an INCLUSIVE cell-index
-    // range that must always be converted to an EXCLUSIVE grid-line span by
-    // adding one unit to the far end - for a single cell (min===max) that's
-    // exactly the old "+1 if equal" behavior; for a multi-cell drag
-    // (min!==max) it now ALSO correctly includes the last dragged cell,
-    // which the old code silently failed to do (that mismatch, combined
-    // with the rounding bug above, is what produced the off-by-one).
+    // When padWithUnit is true, both in-plane axes get +unit added to
+    // their max: with snapping on, startPoint/currentPoint are FLOORED
+    // cell indices (see snapToCell), so min/max represent an INCLUSIVE
+    // cell-index range that must be converted to an EXCLUSIVE grid-line
+    // span by adding one unit to the far end. When snapping is off (free
+    // drag), min/max are already literal continuous endpoints of the
+    // drawn box, so no padding is added - sx/sy/sz come out as whatever
+    // size the user actually dragged, including non-square and
+    // non-integer dimensions.
     if (Math.abs(this.localNormal[0]) > 0.5) {
-      maxY += unit;
-      maxZ += unit;
+      if (padWithUnit) { maxY += unit; maxZ += unit; }
       if (this.height >= 0) maxX += this.height;
       else minX += this.height;
     } else if (Math.abs(this.localNormal[1]) > 0.5) {
-      maxX += unit;
-      maxZ += unit;
+      if (padWithUnit) { maxX += unit; maxZ += unit; }
       if (this.height >= 0) maxY += this.height;
       else minY += this.height;
     } else {
-      maxX += unit;
-      maxY += unit;
+      if (padWithUnit) { maxX += unit; maxY += unit; }
       if (this.height >= 0) maxZ += this.height;
       else minZ += this.height;
     }
@@ -191,23 +230,33 @@ export function updateAddToolHud() {
   }
   hud.style.display = 'block';
   const unit = AddToolState.baseUnitSize;
+  const snapLabel = AddToolState.snapEnabled ? 'Snap: ON' : 'Snap: OFF (bebas)';
+  // Round for display only - never feeds back into the actual math above.
+  const fmt = (n) => AddToolState.snapEnabled ? n : Math.round(n * 100) / 100;
+
   if (AddToolState.phase === 'HOVER') {
-    hud.textContent = `Ukuran dasar: ${unit}×${unit}×${unit}  (Ctrl+Scroll untuk ubah, klik-kanan untuk batal)`;
+    hud.textContent = `Ukuran dasar: ${unit}×${unit}×${unit}  (${snapLabel} · tahan Ctrl untuk balik sementara · klik untuk kubus instan · drag untuk gambar bebas · Ctrl+Scroll ubah unit · klik-kanan batal)`;
   } else {
     const t = AddToolState.getCubeTransform();
     if (t) {
       hud.textContent = AddToolState.phase === 'DRAW_BASE'
-        ? `Alas: ${t.sx}×${t.sz}  (unit dasar ${unit})`
-        : `${t.sx}×${t.sy}×${t.sz}  (unit dasar ${unit}) — klik untuk selesai, klik-kanan untuk batal`;
+        ? `Alas: ${fmt(t.sx)}×${fmt(t.sz)}  (${snapLabel}, unit ${unit})`
+        : `${fmt(t.sx)}×${fmt(t.sy)}×${fmt(t.sz)}  (${snapLabel}, unit ${unit}) — klik untuk selesai, klik-kanan untuk batal`;
     }
   }
 }
 
 const EXTRUDE_MOVE_THRESHOLD = 6; // px — below this, height stays at its last stable value rather than trusting a possibly near-parallel (numerically unstable) ray/axis-line intersection
 
-export function handleAddToolPointerMove(clientX, clientY, canvas) {
+export function handleAddToolPointerMove(clientX, clientY, canvas, ctrlKey = false) {
   if (!AddToolState.active) return false;
   lastMousePos = [clientX, clientY];
+
+  // Ctrl temporarily INVERTS the persisted snap default for this
+  // interaction only - matches the same "hold Ctrl to flip snapping"
+  // convention as Blender - so users don't have to open Settings just to
+  // draw one free-form box while snap-by-default stays on, or vice versa.
+  const wantSnap = ctrlKey ? !AddToolState.snapEnabled : AddToolState.snapEnabled;
 
   if (AddToolState.phase === 'HOVER') {
     const hit = raycastWorld(clientX, clientY, canvas);
@@ -217,7 +266,7 @@ export function handleAddToolPointerMove(clientX, clientY, canvas) {
       AddToolState.targetRotation = hit.rotation;
       AddToolState.targetPivot = hit.pivot;
       const localPoint = AddToolState.worldToTarget(hit.point);
-      AddToolState.currentPoint = AddToolState.snapToCell(localPoint);
+      AddToolState.currentPoint = AddToolState.resolvePoint(localPoint, wantSnap);
       AddToolState.startPoint = AddToolState.currentPoint;
       AddToolState.height = AddToolState.baseUnitSize;
     } else {
@@ -229,7 +278,7 @@ export function handleAddToolPointerMove(clientX, clientY, canvas) {
     const rdLocal = mat3Apply(AddToolState.targetRinv(), rd);
     const planeHit = rayPlaneIntersect(roLocal, rdLocal, AddToolState.startPoint, AddToolState.localNormal);
     if (planeHit) {
-      AddToolState.currentPoint = AddToolState.snapToCell(planeHit);
+      AddToolState.currentPoint = AddToolState.resolvePoint(planeHit, wantSnap);
       AddToolState.height = AddToolState.baseUnitSize;
     }
   } else if (AddToolState.phase === 'EXTRUDE') {
@@ -245,8 +294,8 @@ export function handleAddToolPointerMove(clientX, clientY, canvas) {
     const cp = closestParamsBetweenLines(AddToolState.startPoint, AddToolState.localNormal, roLocal, rdLocal);
     if (cp) {
       const unit = AddToolState.baseUnitSize;
-      let h = Math.round(cp.s / unit) * unit;
-      if (h === 0) h = unit;
+      let h = wantSnap ? Math.round(cp.s / unit) * unit : Math.round(cp.s * 1000) / 1000;
+      if (h === 0) h = wantSnap ? unit : (cp.s >= 0 ? 0.01 : -0.01);
       AddToolState.height = h;
     }
   }
@@ -301,6 +350,28 @@ export function handleAddToolPointerUp(clientX, clientY, canvas, isClick) {
     return true;
   }
   return false;
+}
+
+/**
+ * Instantly spawns a default-size cube, independent of Add mode / hover
+ * targeting - analogous to Blender's Shift+A "Add > Cube" from the
+ * default (non-interactive) Add menu. Since devoxel has no 3D Cursor
+ * concept, the closest equivalent "current point of focus" is the
+ * camera's orbit target (EditorContext.camera.target), which is already
+ * what the user is looking at/orbiting around.
+ */
+export function spawnInstantCube() {
+  const [px, py, pz] = EditorContext.camera.target;
+  const unit = AddToolState.baseUnitSize;
+  const [r, g, b] = hexToRgb01(PALETTE[paletteIdx % PALETTE.length]);
+  const t = {
+    ox: px - unit / 2, oy: py - unit / 2, oz: pz - unit / 2,
+    sx: unit, sy: unit, sz: unit,
+    px, py, pz,
+    rx: 0, ry: 0, rz: 0,
+    r, g, b
+  };
+  finalizeCube(t);
 }
 
 function finalizeCube(t) {
