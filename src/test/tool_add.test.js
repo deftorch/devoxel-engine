@@ -128,6 +128,7 @@ describe('tool-add.js — interaksi state dan phase', () => {
     AddToolState.baseUnitSize = 1;
 
     const initialHistoryLength = History.undoStack.length;
+    const initialSceneCount = EditorContext.sceneOrder.length;
 
     // isClick = true (klik tanpa drag)
     handleAddToolPointerUp(100, 100, {}, true);
@@ -135,6 +136,21 @@ describe('tool-add.js — interaksi state dan phase', () => {
     assert.equal(AddToolState.phase, 'HOVER', 'Fase harus kembali ke HOVER setelah selesai');
     assert.equal(History.undoStack.length, initialHistoryLength + 1, 'Harus mencatat 1 entry History baru');
     assert.equal(History.undoStack[History.undoStack.length - 1].label, 'Add Box (Draw)');
+    assert.equal(EditorContext.sceneOrder.length, initialSceneCount + 1, 'Entity harus benar-benar dibuat di scene');
+
+    // Ini bagian yang paling penting: benar-benar PANGGIL undo(), bukan
+    // cuma cek entry-nya ada. Bug lama (monkey-patch History.push yang
+    // menimpa undo jadi fungsi kosong untuk label 'Add Box (Draw)') akan
+    // membuat assert di atas tetap lolos - entry-nya tetap ada dengan
+    // label yang benar - tapi entity-nya tidak akan pernah terhapus.
+    // Diverifikasi: menaruh kembali bug lama secara sengaja membuktikan
+    // test tanpa baris ini tetap lolos meski undo()-nya kosong.
+    History.undo();
+    assert.equal(EditorContext.sceneOrder.length, initialSceneCount, 'undo() harus benar-benar menghapus entity yang baru dibuat');
+
+    // Dan redo() harus mengembalikannya lagi.
+    History.redo();
+    assert.equal(EditorContext.sceneOrder.length, initialSceneCount + 1, 'redo() harus mengembalikan entity yang di-undo');
   });
 });
 
