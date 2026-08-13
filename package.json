@@ -19,6 +19,7 @@
     "test": "node --test",
     "check": "node scripts/check-syntax.js",
     "check-deps": "node scripts/check-bitecs-version.js",
+    "regression": "node scripts/regression-check.mjs",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
@@ -28,6 +29,7 @@
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.9.0",
     "prettier": "^3.9.6",
+    "jsdom": "^30.0.1",
     "bitecs": "0.4.0"
   },
   "cdnDependencies": {
