@@ -35,6 +35,7 @@ describe('tool-add.js — getCubeTransform', () => {
     AddToolState.localNormal = [0, 1, 0]; // face Y normal
     AddToolState.height = 1;
     AddToolState.baseUnitSize = 1;
+    AddToolState.snapEnabled = true; // ini spesifik menguji perilaku grid-snapped
     AddToolState.targetRotation = [0, 0, 0];
     AddToolState.targetPivot = [0, 0, 0];
 

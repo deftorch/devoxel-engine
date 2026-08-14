@@ -69,6 +69,14 @@ export const AddToolState = {
   extrudeStartScreenPos: [0, 0], // screen position when EXTRUDE phase began,
                                   // used to require deliberate mouse movement
                                   // before trusting the height computation.
+  extrudeMoved: false, // whether the mouse has moved past EXTRUDE_MOVE_THRESHOLD
+                        // since EXTRUDE phase began. height starts at a tiny
+                        // placeholder (0.001, "start flat") when entering
+                        // EXTRUDE without snap - if the user confirms without
+                        // ever moving the mouse, finalize substitutes
+                        // baseUnitSize instead of that placeholder, so a
+                        // quick double-click doesn't produce an invisible
+                        // sliver cube (see handleAddToolPointerDown).
   snapEnabled: settings.snapEnabled, // when true, drag/extrude snap to
     // baseUnitSize increments (old behavior). When false, dimensions are
     // free/continuous - the user can draw non-square, non-integer-sized
@@ -344,6 +352,7 @@ export function handleAddToolPointerMove(clientX, clientY, canvas, ctrlKey = fal
     // Project ray to the normal axis passing through startPoint
     const cp = closestParamsBetweenLines(AddToolState.startPoint, AddToolState.localNormal, roLocal, rdLocal);
     if (cp) {
+      AddToolState.extrudeMoved = true;
       const unit = AddToolState.baseUnitSize;
       let h = wantSnap ? Math.round(cp.s / unit) * unit : Math.round(cp.s * 1000) / 1000;
       if (h === 0) h = wantSnap ? unit : (cp.s >= 0 ? 0.01 : -0.01);
@@ -379,6 +388,7 @@ export function handleAddToolPointerDown(clientX, clientY, canvas, shiftKey = fa
       AddToolState.startPoint = [lx_sp[0] + offset[0], lx_sp[1] + offset[1], lx_sp[2] + offset[2]];
       AddToolState.currentPoint = [lx_cp[0] + offset[0], lx_cp[1] + offset[1], lx_cp[2] + offset[2]];
       AddToolState.height = 0.001; // Start flat
+      AddToolState.extrudeMoved = false;
       
       AddToolState.phase = 'EXTRUDE';
       AddToolState.extrudeStartScreenPos = [clientX, clientY];
@@ -389,6 +399,14 @@ export function handleAddToolPointerDown(clientX, clientY, canvas, shiftKey = fa
     AddToolState.phase = 'DRAW_BASE';
     return true;
   } else if (AddToolState.phase === 'EXTRUDE') {
+    if (!AddToolState.extrudeMoved) {
+      // User confirmed without ever moving the mouse past the threshold -
+      // height is still sitting at the 0.001 "start flat" placeholder
+      // (or, in snap mode, already baseUnitSize, so this is a no-op there).
+      // Finalizing with 0.001 would produce a near-invisible sliver cube,
+      // which is never what a quick double-click was meant to produce.
+      AddToolState.height = AddToolState.baseUnitSize;
+    }
     const t = AddToolState.getCubeTransform();
     if (t) finalizeCube(t);
     AddToolState.phase = 'HOVER';
@@ -422,6 +440,7 @@ export function handleAddToolPointerUp(clientX, clientY, canvas, isClick) {
       // Move to extrude
       AddToolState.phase = 'EXTRUDE';
       AddToolState.extrudeStartScreenPos = [clientX, clientY];
+      AddToolState.extrudeMoved = false;
       // Pertahankan tinggi saat ini (bisa 0.001 atau baseUnitSize),
       // agar tidak tiba-tiba melompat menjadi tebal 1 unit.
     }
