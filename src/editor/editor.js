@@ -9,7 +9,7 @@ import { uploadMesh, rebuildMesh, readTransform, writeTransform, hexToRgb01, rgb
 import { refreshOutliner } from "./ui/outliner.js";
 import { syncPropertyInputs } from "./ui/properties.js";
 import { initAddToolSettingsPanel } from "./ui/add-tool-settings.js";
-import { cameraBasis, getFovY, initCameraInput, getGizmoMode, setGizmoMode } from "./camera-input.js";
+import { cameraBasis, getFovY, initCameraInput, getGizmoMode, setGizmoMode, modalTransform, startModalTransform, handleModalConstraint, endModalTransform } from "./camera-input.js";
 import { exportScene, importScene } from "./io.js";
 import { vAdd, vSub, vScale, vCross, vDot, vNorm, rotationMat3, mat3Apply, mat4Perspective, mat4LookAt, mat4Multiply } from "../core/utils/math.js?v=2";
 
@@ -199,9 +199,32 @@ window.addEventListener('keydown', (e) => {
   }
   if (!e.ctrlKey && !e.shiftKey && !e.altKey) {
     const key = e.key.toLowerCase();
-    if (key === 'g') setGizmoModeAndSync('translate');
-    else if (key === 'r') setGizmoModeAndSync('rotate');
-    else if (key === 's') setGizmoModeAndSync('scale');
+    
+    if (modalTransform) {
+      if (key === 'x' || key === 'y' || key === 'z') {
+        if (handleModalConstraint(key, canvas)) e.preventDefault();
+      } else if (key === 'enter') {
+        endModalTransform(true, canvas);
+        e.preventDefault();
+      } else if (key === 'escape') {
+        endModalTransform(false, canvas);
+        e.preventDefault();
+      }
+      return;
+    }
+    
+    if (key === 'g') { setGizmoModeAndSync('translate'); startModalTransform('translate', canvas); e.preventDefault(); }
+    else if (key === 'r') { setGizmoModeAndSync('rotate'); startModalTransform('rotate', canvas); e.preventDefault(); }
+    else if (key === 's') { setGizmoModeAndSync('scale'); startModalTransform('scale', canvas); e.preventDefault(); }
+  } else if (modalTransform) {
+    if (e.key === 'Escape') {
+      endModalTransform(false, canvas);
+      e.preventDefault();
+    }
+    if (e.key === 'Enter') {
+      endModalTransform(true, canvas);
+      e.preventDefault();
+    }
   }
 });
 
@@ -301,14 +324,25 @@ async function main() {
 
       const virtualPivot = getVirtualPivot();
       if (virtualPivot) {
-        const mode = getGizmoMode();
-        if (mode !== 'add') {
-          const gizmoGeo =
-            mode === 'rotate' ? buildRotateGizmoGeometry(virtualPivot) :
-            mode === 'scale' ? buildScaleGizmoGeometry(virtualPivot) :
-            buildGizmoGeometry(virtualPivot);
-          debugData.lines.push({ data: gizmoGeo.lineData, depthTest: false }); // X-ray
-          if (gizmoGeo.triData) debugData.tris.push({ data: gizmoGeo.triData, depthTest: false });
+        if (modalTransform) {
+          if (modalTransform.constraint) {
+            const inf = 1000;
+            const p1 = vSub(modalTransform.pivot, vScale(modalTransform.axisDir, inf));
+            const p2 = vAdd(modalTransform.pivot, vScale(modalTransform.axisDir, inf));
+            const col = modalTransform.constraint === 'x' ? [1, 0.3, 0.3] : modalTransform.constraint === 'y' ? [0.3, 1, 0.3] : [0.3, 0.3, 1];
+            const lineData = interleaveLine([...p1, ...p2], [...col, ...col]);
+            debugData.lines.push({ data: lineData, depthTest: false });
+          }
+        } else {
+          const mode = getGizmoMode();
+          if (mode !== 'add') {
+            const gizmoGeo =
+              mode === 'rotate' ? buildRotateGizmoGeometry(virtualPivot) :
+              mode === 'scale' ? buildScaleGizmoGeometry(virtualPivot) :
+              buildGizmoGeometry(virtualPivot);
+            debugData.lines.push({ data: gizmoGeo.lineData, depthTest: false }); // X-ray
+            if (gizmoGeo.triData) debugData.tris.push({ data: gizmoGeo.triData, depthTest: false });
+          }
         }
       }
 

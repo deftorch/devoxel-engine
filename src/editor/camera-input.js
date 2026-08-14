@@ -1,4 +1,4 @@
-import { vAdd, vSub, vScale, vCross, vNorm, vDot, rayPlaneIntersect, mat3ToEulerXYZ, mat3Mul, mat3Apply, rotationMat3 } from "../core/utils/math.js?v=2";
+import { vAdd, vSub, vScale, vCross, vNorm, vDot, rayPlaneIntersect, mat3ToEulerXYZ, mat3Mul, mat3Apply, rotationMat3, projectToScreen, mat4LookAt, mat4Perspective, mat4Multiply } from "../core/utils/math.js?v=2";
 import { EditorContext, NodeMeta, getSelection } from "./state.js";
 import { readTransform, writeTransform, rebuildMesh, getVirtualPivot } from "./scene-ops.js";
 import { syncPropertyInputs } from "./ui/properties.js";
@@ -19,6 +19,213 @@ export function setGizmoMode(mode) {
     AddToolState.active = true;
     AddToolState.phase = 'HOVER';
     updateAddToolHud();
+  }
+}
+
+let currentMousePos = [0, 0];
+export let modalTransform = null;
+
+function axisAngleMat3(axis, theta) {
+  const c = Math.cos(theta), s = Math.sin(theta), t = 1 - c;
+  const x = axis[0], y = axis[1], z = axis[2];
+  return [
+    t*x*x + c,    t*x*y - s*z,  t*x*z + s*y,
+    t*x*y + s*z,  t*y*y + c,    t*y*z - s*x,
+    t*x*z - s*y,  t*y*z + s*x,  t*z*z + c
+  ];
+}
+
+export function startModalTransform(mode, canvas) {
+  const selection = Array.from(getSelection());
+  if (selection.length === 0) return;
+  const pivot = getVirtualPivot();
+  if (!pivot) return;
+
+  const startTransforms = [];
+  for (const eid of selection) {
+    if (!NodeMeta.isGroup[eid]) {
+      startTransforms.push({ eid, t: readTransform(eid) });
+    }
+  }
+
+  const { ro, rd } = screenToRay(currentMousePos[0], currentMousePos[1], canvas);
+  const { eye, forward } = cameraBasis();
+  const viewPlaneNormal = forward; 
+  
+  const startHitPoint = rayPlaneIntersect(ro, rd, pivot, viewPlaneNormal) || pivot;
+
+  const center = vAdd(eye, forward);
+  const view = mat4LookAt(eye, center, [0, 1, 0]);
+  const aspect = canvas.width / canvas.height;
+  const proj = mat4Perspective(getFovY(), aspect, 0.1, 500);
+  const viewProj = mat4Multiply(proj, view);
+  
+  const rectEl = canvas.getBoundingClientRect();
+  const screenPivot = projectToScreen(viewProj, pivot, rectEl.width, rectEl.height) || { x: rectEl.width/2, y: rectEl.height/2 };
+  const canvasPivot = [screenPivot.x + rectEl.left, screenPivot.y + rectEl.top];
+
+  const dx = currentMousePos[0] - canvasPivot[0];
+  const dy = currentMousePos[1] - canvasPivot[1];
+  const startAngle = Math.atan2(dy, dx);
+  const startDist = Math.max(1, Math.hypot(dx, dy));
+
+  modalTransform = {
+    mode,
+    constraint: null,
+    startTransforms,
+    pivot,
+    viewPlaneNormal,
+    startHitPoint,
+    canvasPivot,
+    startAngle,
+    startDist,
+    startS: 0,
+    axisDir: [0, 0, 0]
+  };
+  
+  canvas.classList.add('dragging');
+}
+
+export function handleModalConstraint(key, canvas) {
+  if (!modalTransform) return false;
+  const k = key.toLowerCase();
+  if (k === 'x' || k === 'y' || k === 'z') {
+    modalTransform.constraint = k;
+    modalTransform.axisDir = k === 'x' ? [1,0,0] : k === 'y' ? [0,1,0] : [0,0,1];
+    
+    const { ro, rd } = screenToRay(currentMousePos[0], currentMousePos[1], canvas);
+    const cp = closestParamsBetweenLines(modalTransform.pivot, modalTransform.axisDir, ro, rd);
+    if (cp) modalTransform.startS = cp.s;
+    
+    const { p1, p2 } = ringPlaneBasis(modalTransform.axisDir);
+    const hitPoint = rayPlaneIntersect(ro, rd, modalTransform.pivot, modalTransform.axisDir);
+    if (hitPoint) {
+      modalTransform.startAngle = angleAroundAxis(vSub(hitPoint, modalTransform.pivot), p1, p2);
+    }
+    
+    applyModalTransform(canvas);
+    return true;
+  }
+  return false;
+}
+
+export function endModalTransform(confirm, canvas) {
+  if (!modalTransform) return;
+  if (confirm) {
+    const snapshots = modalTransform.startTransforms.map(st => ({ eid: st.eid, startT: st.t, newT: readTransform(st.eid) }));
+    const verb = modalTransform.mode === 'translate' ? 'Translate' : modalTransform.mode === 'rotate' ? 'Rotate' : 'Scale';
+    const label = snapshots.length > 1 ? `${verb} ${snapshots.length} Elements` : `${verb} Element`;
+
+    History.push({
+        label,
+        redo() {
+            for (const s of snapshots) writeTransform(s.eid, s.newT);
+            for (const s of snapshots) rebuildMesh(s.eid);
+            EditorContext.emit('transformChanged');
+        },
+        undo() {
+            for (const s of snapshots) writeTransform(s.eid, s.startT);
+            for (const s of snapshots) rebuildMesh(s.eid);
+            EditorContext.emit('transformChanged');
+        }
+    });
+  } else {
+    for (const st of modalTransform.startTransforms) {
+      writeTransform(st.eid, st.t);
+      rebuildMesh(st.eid);
+    }
+    EditorContext.emit('transformChanged');
+  }
+  modalTransform = null;
+  canvas.classList.remove('dragging');
+}
+
+function applyModalTransform(canvas) {
+  if (!modalTransform) return;
+  const { ro, rd } = screenToRay(currentMousePos[0], currentMousePos[1], canvas);
+  
+  if (modalTransform.mode === 'translate') {
+    let deltaVec = [0, 0, 0];
+    if (modalTransform.constraint) {
+      const cp = closestParamsBetweenLines(modalTransform.pivot, modalTransform.axisDir, ro, rd);
+      if (cp) {
+        const delta = cp.s - modalTransform.startS;
+        deltaVec = vScale(modalTransform.axisDir, delta);
+      }
+    } else {
+      const hitPoint = rayPlaneIntersect(ro, rd, modalTransform.pivot, modalTransform.viewPlaneNormal);
+      if (hitPoint) {
+        deltaVec = vSub(hitPoint, modalTransform.startHitPoint);
+      }
+    }
+    
+    for (const st of modalTransform.startTransforms) {
+      const t = { ...st.t };
+      t.ox = st.t.ox + deltaVec[0];
+      t.oy = st.t.oy + deltaVec[1];
+      t.oz = st.t.oz + deltaVec[2];
+      t.px = st.t.px + deltaVec[0];
+      t.py = st.t.py + deltaVec[1];
+      t.pz = st.t.pz + deltaVec[2];
+      writeTransform(st.eid, t);
+      rebuildMesh(st.eid);
+    }
+  } else if (modalTransform.mode === 'rotate') {
+    let deltaR = null;
+    if (modalTransform.constraint) {
+      const hitPoint = rayPlaneIntersect(ro, rd, modalTransform.pivot, modalTransform.axisDir);
+      if (hitPoint) {
+        const { p1, p2 } = ringPlaneBasis(modalTransform.axisDir);
+        const currentAngle = angleAroundAxis(vSub(hitPoint, modalTransform.pivot), p1, p2);
+        const deltaAngle = currentAngle - modalTransform.startAngle;
+        const axis = modalTransform.constraint;
+        deltaR = axis === 'x' ? rotationMat3(deltaAngle * 180 / Math.PI, 0, 0) :
+                 axis === 'y' ? rotationMat3(0, deltaAngle * 180 / Math.PI, 0) :
+                 rotationMat3(0, 0, deltaAngle * 180 / Math.PI);
+      }
+    } else {
+      const dx = currentMousePos[0] - modalTransform.canvasPivot[0];
+      const dy = currentMousePos[1] - modalTransform.canvasPivot[1];
+      const currentAngle = Math.atan2(dy, dx);
+      const deltaAngleRad = currentAngle - modalTransform.startAngle;
+      deltaR = axisAngleMat3(modalTransform.viewPlaneNormal, -deltaAngleRad); 
+    }
+    
+    if (deltaR) {
+      for (const st of modalTransform.startTransforms) {
+        const t = { ...st.t };
+        const R_old = rotationMat3(st.t.rx, st.t.ry, st.t.rz);
+        const R_new = mat3Mul(deltaR, R_old);
+        const euler = mat3ToEulerXYZ(R_new);
+        t.rx = euler.rx; t.ry = euler.ry; t.rz = euler.rz;
+        
+        const rel = [st.t.px - modalTransform.pivot[0], st.t.py - modalTransform.pivot[1], st.t.pz - modalTransform.pivot[2]];
+        const relRotated = mat3Apply(deltaR, rel);
+        t.px = modalTransform.pivot[0] + relRotated[0];
+        t.py = modalTransform.pivot[1] + relRotated[1];
+        t.pz = modalTransform.pivot[2] + relRotated[2];
+        writeTransform(st.eid, t);
+        rebuildMesh(st.eid);
+      }
+    }
+  } else if (modalTransform.mode === 'scale') {
+    const dx = currentMousePos[0] - modalTransform.canvasPivot[0];
+    const dy = currentMousePos[1] - modalTransform.canvasPivot[1];
+    const curDist = Math.max(1, Math.hypot(dx, dy));
+    const k = curDist / modalTransform.startDist;
+    
+    for (const st of modalTransform.startTransforms) {
+      const t = { ...st.t };
+      if (!modalTransform.constraint || modalTransform.constraint === 'x') { t.ox = st.t.px + (st.t.ox - st.t.px) * k; t.sx = st.t.sx * k; }
+      if (!modalTransform.constraint || modalTransform.constraint === 'y') { t.oy = st.t.py + (st.t.oy - st.t.py) * k; t.sy = st.t.sy * k; }
+      if (!modalTransform.constraint || modalTransform.constraint === 'z') { t.oz = st.t.pz + (st.t.oz - st.t.pz) * k; t.sz = st.t.sz * k; }
+      writeTransform(st.eid, t);
+      rebuildMesh(st.eid);
+    }
+  }
+  
+  if (modalTransform.startTransforms.length === 1) {
+    syncPropertyInputs(modalTransform.startTransforms[0].eid);
   }
 }
 
@@ -158,6 +365,13 @@ export function initCameraInput(canvas) {
   canvas.addEventListener('mousedown', (e) => {
     mouseDownPos = [e.clientX, e.clientY];
     lastMouse = [e.clientX, e.clientY];
+    currentMousePos = [e.clientX, e.clientY];
+    
+    if (modalTransform) {
+      if (e.button === 0) endModalTransform(true, canvas);
+      else if (e.button === 2) endModalTransform(false, canvas);
+      return;
+    }
     const rect = canvas.getBoundingClientRect();
     mouseDownCanvasPos = [e.clientX - rect.left, e.clientY - rect.top];
 
@@ -267,9 +481,18 @@ export function initCameraInput(canvas) {
     canvas.classList.remove('dragging');
   });
 
-  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  canvas.addEventListener('contextmenu', (e) => {
+    if (modalTransform) e.preventDefault();
+    else e.preventDefault();
+  });
 
   window.addEventListener('mousemove', (e) => {
+    currentMousePos = [e.clientX, e.clientY];
+    
+    if (modalTransform) {
+      applyModalTransform(canvas);
+      return;
+    }
     if (AddToolState.active && inputMode !== 'orbit' && inputMode !== 'pan') {
        handleAddToolPointerMove(e.clientX, e.clientY, canvas, e.ctrlKey, e.shiftKey);
        if (inputMode === 'add_tool') {
