@@ -8,10 +8,10 @@ const STORAGE_KEY = 'devoxel.addToolSettings.v1';
 
 export const DEFAULT_PALETTE = ['#7fd4ff', '#ffb27f', '#b6ff7f', '#ff7fd4', '#7fffcf', '#d4ff7f', '#ff9f7f', '#9f7fff'];
 export const DEFAULT_UNIT_SIZE = 1;
-// Default: snapping ON. The unit size above is only meaningful as a snap
-// increment when this is true - with it false, drag/extrude produce
-// continuous (non-integer) dimensions instead of grid-aligned ones.
-export const DEFAULT_SNAP_ENABLED = true;
+// Default: snapping OFF (bebas mode). The unit size is only meaningful as a snap
+// increment when this is toggled on via settings or by holding Ctrl. With it false,
+// drag/extrude produce continuous (non-integer) dimensions.
+export const DEFAULT_SNAP_ENABLED = false;
 
 function isValidHexColor(v) {
   return typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v);

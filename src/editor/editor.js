@@ -123,8 +123,7 @@ window.addEventListener('unhandledrejection', (e) =>
 // -----------------------------------------------------------------------
 // Toolbar wiring
 // -----------------------------------------------------------------------
-$('btn-add-cube-snap').addEventListener('click', () => activateAddTool(true));
-$('btn-add-cube-free').addEventListener('click', () => activateAddTool(false));
+$('btn-add-cube').addEventListener('click', () => activateAddTool(false));
 $('btn-add-group').addEventListener('click', addGroup);
 $('btn-delete').addEventListener('click', deleteSelected);
 $('btn-duplicate').addEventListener('click', duplicateSelected);
@@ -132,13 +131,7 @@ $('btn-undo').addEventListener('click', () => History.undo());
 $('btn-redo').addEventListener('click', () => History.redo());
 $('btn-export').addEventListener('click', exportScene);
 
-// Two selectable Add Tool "flavors" so the person can try both feels and
-// pick a preference, rather than only having one fixed default:
-//  - snap=true:  grid-snapped drag (voxel/blocky building, old default)
-//  - snap=false: free/continuous drag (rectangles, decimal sizes)
-// Both share the exact same underlying tool (tool-add.js) - only the
-// default snapEnabled differs - so switching between them mid-session is
-// just a one-click preference change, not two separate code paths.
+// activateAddTool sets snap state (which persists) and activates gizmo mode
 function activateAddTool(snap) {
   setSnapEnabled(snap);
   setGizmoModeAndSync('add');
@@ -150,14 +143,8 @@ function setGizmoModeAndSync(mode) {
     const btn = document.getElementById(id);
     if (btn) btn.classList.toggle('gizmo-mode-active', m === mode);
   }
-  // The two Add Tool buttons both represent gizmo mode 'add', but only one
-  // should highlight at a time - whichever matches the CURRENT snap
-  // preference - so the toolbar reflects which variant is active, not just
-  // that "some add mode" is active.
-  const snapBtn = document.getElementById('btn-add-cube-snap');
-  const freeBtn = document.getElementById('btn-add-cube-free');
-  if (snapBtn) snapBtn.classList.toggle('gizmo-mode-active', mode === 'add' && AddToolState.snapEnabled);
-  if (freeBtn) freeBtn.classList.toggle('gizmo-mode-active', mode === 'add' && !AddToolState.snapEnabled);
+  const addBtn = document.getElementById('btn-add-cube');
+  if (addBtn) addBtn.classList.toggle('gizmo-mode-active', mode === 'add');
 }
 $('btn-gizmo-translate').addEventListener('click', () => setGizmoModeAndSync('translate'));
 $('btn-gizmo-rotate').addEventListener('click', () => setGizmoModeAndSync('rotate'));

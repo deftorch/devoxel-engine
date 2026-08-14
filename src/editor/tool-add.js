@@ -277,7 +277,7 @@ export function handleAddToolPointerMove(clientX, clientY, canvas, ctrlKey = fal
       const localPoint = AddToolState.worldToTarget(hit.point);
       AddToolState.currentPoint = AddToolState.resolvePoint(localPoint, wantSnap);
       AddToolState.startPoint = AddToolState.currentPoint;
-      AddToolState.height = AddToolState.baseUnitSize;
+      AddToolState.height = wantSnap ? AddToolState.baseUnitSize : 0.001;
     } else {
       AddToolState.currentPoint = null;
     }
@@ -288,7 +288,7 @@ export function handleAddToolPointerMove(clientX, clientY, canvas, ctrlKey = fal
     const planeHit = rayPlaneIntersect(roLocal, rdLocal, AddToolState.startPoint, AddToolState.localNormal);
     if (planeHit) {
       AddToolState.currentPoint = AddToolState.resolvePoint(planeHit, wantSnap);
-      AddToolState.height = AddToolState.baseUnitSize;
+      AddToolState.height = wantSnap ? AddToolState.baseUnitSize : 0.001;
     }
   } else if (AddToolState.phase === 'EXTRUDE') {
     const movedSinceExtrudeStart = Math.hypot(clientX - AddToolState.extrudeStartScreenPos[0], clientY - AddToolState.extrudeStartScreenPos[1]);
@@ -354,7 +354,8 @@ export function handleAddToolPointerUp(clientX, clientY, canvas, isClick) {
       // Move to extrude
       AddToolState.phase = 'EXTRUDE';
       AddToolState.extrudeStartScreenPos = [clientX, clientY];
-      AddToolState.height = AddToolState.baseUnitSize;
+      // Pertahankan tinggi saat ini (bisa 0.001 atau baseUnitSize),
+      // agar tidak tiba-tiba melompat menjadi tebal 1 unit.
     }
     return true;
   }
