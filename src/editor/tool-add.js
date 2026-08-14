@@ -1,7 +1,7 @@
 import { vAdd, vSub, vScale, vNorm, rayPlaneIntersect, rotationMat3, mat3Transpose, mat3Apply } from "../core/utils/math.js?v=2";
 import { raycastWorld } from "./picking.js";
 import { screenToRay, closestParamsBetweenLines } from "./camera-input.js";
-import { createNodeRaw, destroyNodeRaw, selectNode } from "./scene-ops.js";
+import { createNodeRaw, destroyNodeRaw, selectNode, readTransform } from "./scene-ops.js";
 import { getPrimarySelection, NodeMeta, EditorContext } from "./state.js";
 import History from "./history.js";
 import { interleaveLine } from "./geometry.js";
@@ -257,9 +257,10 @@ export function updateAddToolHud() {
 
 const EXTRUDE_MOVE_THRESHOLD = 6; // px — below this, height stays at its last stable value rather than trusting a possibly near-parallel (numerically unstable) ray/axis-line intersection
 
-export function handleAddToolPointerMove(clientX, clientY, canvas, ctrlKey = false) {
+export function handleAddToolPointerMove(clientX, clientY, canvas, ctrlKey = false, shiftKey = false) {
   if (!AddToolState.active) return false;
   lastMousePos = [clientX, clientY];
+  AddToolState.shiftDown = shiftKey;
 
   // Ctrl temporarily INVERTS the persisted snap default for this
   // interaction only - matches the same "hold Ctrl to flip snapping"
@@ -278,8 +279,49 @@ export function handleAddToolPointerMove(clientX, clientY, canvas, ctrlKey = fal
       AddToolState.currentPoint = AddToolState.resolvePoint(localPoint, wantSnap);
       AddToolState.startPoint = AddToolState.currentPoint;
       AddToolState.height = wantSnap ? AddToolState.baseUnitSize : 0.001;
+      AddToolState.hoverEid = hit.eid;
+      
+      AddToolState.hoverEdge = null;
+      if (hit.eid >= 0) {
+        const t = readTransform(hit.eid);
+        const rawLocal = [
+          localPoint[0] - (t.ox - t.px),
+          localPoint[1] - (t.oy - t.py),
+          localPoint[2] - (t.oz - t.pz)
+        ];
+        const n = hit.localNormal;
+        const axisIdx = n.findIndex(v => Math.abs(v) > 0.5);
+        const [ia, ib] = [0, 1, 2].filter(i => i !== axisIdx);
+        
+        const lenA = ia===0 ? t.sx : ia===1 ? t.sy : t.sz;
+        const lenB = ib===0 ? t.sx : ib===1 ? t.sy : t.sz;
+        
+        const distA0 = Math.abs(rawLocal[ia] - 0);
+        const distA1 = Math.abs(rawLocal[ia] - lenA);
+        const distB0 = Math.abs(rawLocal[ib] - 0);
+        const distB1 = Math.abs(rawLocal[ib] - lenB);
+        
+        // Edge detection threshold (15% of the side length, capped at 0.5 units)
+        const threshA = Math.min(0.5, lenA * 0.15);
+        const threshB = Math.min(0.5, lenB * 0.15);
+        
+        let minEdgeDist = Infinity;
+        let edgeAxis = -1;
+        let edgeValue = 0;
+        
+        if (distA0 < threshA && distA0 < minEdgeDist) { minEdgeDist = distA0; edgeAxis = ia; edgeValue = 0; }
+        if (distA1 < threshA && distA1 < minEdgeDist) { minEdgeDist = distA1; edgeAxis = ia; edgeValue = lenA; }
+        if (distB0 < threshB && distB0 < minEdgeDist) { minEdgeDist = distB0; edgeAxis = ib; edgeValue = 0; }
+        if (distB1 < threshB && distB1 < minEdgeDist) { minEdgeDist = distB1; edgeAxis = ib; edgeValue = lenB; }
+        
+        if (minEdgeDist < Infinity) {
+          AddToolState.hoverEdge = { axis: edgeAxis, val: edgeValue };
+        }
+      }
     } else {
       AddToolState.currentPoint = null;
+      AddToolState.hoverEid = -1;
+      AddToolState.hoverEdge = null;
     }
   } else if (AddToolState.phase === 'DRAW_BASE') {
     const { ro, rd } = screenToRay(clientX, clientY, canvas);
@@ -314,10 +356,36 @@ export function handleAddToolPointerMove(clientX, clientY, canvas, ctrlKey = fal
 
 let nextNameCube = 1;
 
-export function handleAddToolPointerDown(clientX, clientY, canvas) {
+export function handleAddToolPointerDown(clientX, clientY, canvas, shiftKey = false) {
   if (!AddToolState.active) return false;
   
   if (AddToolState.phase === 'HOVER' && AddToolState.currentPoint) {
+    if (shiftKey && AddToolState.hoverEid >= 0) {
+      // Smart Extrude mode: clone the base of the hovered face
+      const t = readTransform(AddToolState.hoverEid);
+      let lx_sp = [0, 0, 0], lx_cp = [t.sx, t.sy, t.sz];
+      if (AddToolState.localNormal[0] > 0.5) lx_sp[0] = lx_cp[0] = t.sx;
+      else if (AddToolState.localNormal[0] < -0.5) lx_sp[0] = lx_cp[0] = 0;
+      else if (AddToolState.localNormal[1] > 0.5) lx_sp[1] = lx_cp[1] = t.sy;
+      else if (AddToolState.localNormal[1] < -0.5) lx_sp[1] = lx_cp[1] = 0;
+      else if (AddToolState.localNormal[2] > 0.5) lx_sp[2] = lx_cp[2] = t.sz;
+      else if (AddToolState.localNormal[2] < -0.5) lx_sp[2] = lx_cp[2] = 0;
+      
+      if (AddToolState.hoverEdge) {
+        lx_sp[AddToolState.hoverEdge.axis] = lx_cp[AddToolState.hoverEdge.axis] = AddToolState.hoverEdge.val;
+      }
+      
+      const offset = [t.ox - t.px, t.oy - t.py, t.oz - t.pz];
+      AddToolState.startPoint = [lx_sp[0] + offset[0], lx_sp[1] + offset[1], lx_sp[2] + offset[2]];
+      AddToolState.currentPoint = [lx_cp[0] + offset[0], lx_cp[1] + offset[1], lx_cp[2] + offset[2]];
+      AddToolState.height = 0.001; // Start flat
+      
+      AddToolState.phase = 'EXTRUDE';
+      AddToolState.extrudeStartScreenPos = [clientX, clientY];
+      updateAddToolHud();
+      return true;
+    }
+
     AddToolState.phase = 'DRAW_BASE';
     return true;
   } else if (AddToolState.phase === 'EXTRUDE') {
@@ -394,6 +462,71 @@ export function spawnInstantCube() {
  */
 export function buildHoverFaceGrid() {
   if (AddToolState.phase !== 'HOVER' || !AddToolState.currentPoint) return null;
+
+  if (AddToolState.shiftDown && AddToolState.hoverEid >= 0) {
+    const t = readTransform(AddToolState.hoverEid);
+    let lx_sp = [0, 0, 0], lx_cp = [t.sx, t.sy, t.sz];
+    if (AddToolState.localNormal[0] > 0.5) lx_sp[0] = lx_cp[0] = t.sx;
+    else if (AddToolState.localNormal[0] < -0.5) lx_sp[0] = lx_cp[0] = 0;
+    else if (AddToolState.localNormal[1] > 0.5) lx_sp[1] = lx_cp[1] = t.sy;
+    else if (AddToolState.localNormal[1] < -0.5) lx_sp[1] = lx_cp[1] = 0;
+    else if (AddToolState.localNormal[2] > 0.5) lx_sp[2] = lx_cp[2] = t.sz;
+    else if (AddToolState.localNormal[2] < -0.5) lx_sp[2] = lx_cp[2] = 0;
+    
+    if (AddToolState.hoverEdge) {
+      lx_sp[AddToolState.hoverEdge.axis] = lx_cp[AddToolState.hoverEdge.axis] = AddToolState.hoverEdge.val;
+    }
+    
+    // Offset by t.ox - t.px, etc. PLUS a tiny epsilon along the normal to prevent Z-fighting!
+    const n = AddToolState.localNormal;
+    const EPSILON = 0.005;
+    const offset = [
+      t.ox - t.px + n[0] * EPSILON,
+      t.oy - t.py + n[1] * EPSILON,
+      t.oz - t.pz + n[2] * EPSILON
+    ];
+    let sp = [lx_sp[0] + offset[0], lx_sp[1] + offset[1], lx_sp[2] + offset[2]];
+    let cp = [lx_cp[0] + offset[0], lx_cp[1] + offset[1], lx_cp[2] + offset[2]];
+
+    const p00 = [...sp], p10 = [...sp], p01 = [...sp], p11 = [...sp];
+    const axisIdx = n.findIndex((v) => Math.abs(v) > 0.5);
+    const [ia, ib] = [0, 1, 2].filter((i) => i !== axisIdx);
+    p10[ia] = cp[ia]; p01[ib] = cp[ib];
+    p11[ia] = cp[ia]; p11[ib] = cp[ib];
+
+    const pos = [], col = [];
+    const color = [1, 0.9, 0.2]; // Yellow highlight
+    
+    const w00 = AddToolState.targetToWorld(p00);
+    const w10 = AddToolState.targetToWorld(p10);
+    const w11 = AddToolState.targetToWorld(p11);
+    const w01 = AddToolState.targetToWorld(p01);
+    
+    pos.push(...w00, ...w10); col.push(...color, ...color);
+    pos.push(...w10, ...w11); col.push(...color, ...color);
+    pos.push(...w11, ...w01); col.push(...color, ...color);
+    pos.push(...w01, ...w00); col.push(...color, ...color);
+    const lines = interleaveLine(pos, col);
+    
+    let tris = null;
+    if (!AddToolState.hoverEdge) {
+      const triPos = [], triCol = [];
+      const fillColor = [0.6, 0.55, 0.1]; // Dimmed yellow for the solid face fill
+      
+      // Front face
+      triPos.push(...w00, ...w10, ...w11); triCol.push(...fillColor, ...fillColor, ...fillColor);
+      triPos.push(...w00, ...w11, ...w01); triCol.push(...fillColor, ...fillColor, ...fillColor);
+      
+      // Back face (so it renders regardless of gl.CULL_FACE winding direction)
+      triPos.push(...w00, ...w11, ...w10); triCol.push(...fillColor, ...fillColor, ...fillColor);
+      triPos.push(...w00, ...w01, ...w11); triCol.push(...fillColor, ...fillColor, ...fillColor);
+      
+      tris = interleaveLine(triPos, triCol);
+    }
+    
+    return { lines, tris };
+  }
+
   const unit = AddToolState.baseUnitSize;
   const n = AddToolState.localNormal;
   const axisIdx = n.findIndex((v) => Math.abs(v) > 0.5);

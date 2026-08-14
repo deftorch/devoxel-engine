@@ -318,7 +318,11 @@ async function main() {
         // the box outline drawn below once DRAW_BASE/EXTRUDE take over.
         if (AddToolState.phase === 'HOVER') {
           const hoverGrid = buildHoverFaceGrid();
-          if (hoverGrid) debugData.lines.push({ data: hoverGrid, depthTest: true });
+          if (hoverGrid) {
+            if (hoverGrid.lines) debugData.lines.push({ data: hoverGrid.lines, depthTest: true });
+            else debugData.lines.push({ data: hoverGrid, depthTest: true });
+            if (hoverGrid.tris) debugData.tris.push({ data: hoverGrid.tris, depthTest: true });
+          }
         }
         const t = AddToolState.getCubeTransform();
         if (t) {

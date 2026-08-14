@@ -163,7 +163,7 @@ export function initCameraInput(canvas) {
 
     if (e.button === 0) {
       if (AddToolState.active) {
-         if (handleAddToolPointerDown(e.clientX, e.clientY, canvas)) {
+         if (handleAddToolPointerDown(e.clientX, e.clientY, canvas, e.shiftKey)) {
              inputMode = 'add_tool';
              canvas.classList.add('dragging');
              return;
@@ -271,7 +271,7 @@ export function initCameraInput(canvas) {
 
   window.addEventListener('mousemove', (e) => {
     if (AddToolState.active && inputMode !== 'orbit' && inputMode !== 'pan') {
-       handleAddToolPointerMove(e.clientX, e.clientY, canvas, e.ctrlKey);
+       handleAddToolPointerMove(e.clientX, e.clientY, canvas, e.ctrlKey, e.shiftKey);
        if (inputMode === 'add_tool') {
            lastMouse = [e.clientX, e.clientY];
            return;
