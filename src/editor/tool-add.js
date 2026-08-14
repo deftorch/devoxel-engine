@@ -399,14 +399,6 @@ export function handleAddToolPointerDown(clientX, clientY, canvas, shiftKey = fa
     AddToolState.phase = 'DRAW_BASE';
     return true;
   } else if (AddToolState.phase === 'EXTRUDE') {
-    if (!AddToolState.extrudeMoved) {
-      // User confirmed without ever moving the mouse past the threshold -
-      // height is still sitting at the 0.001 "start flat" placeholder
-      // (or, in snap mode, already baseUnitSize, so this is a no-op there).
-      // Finalizing with 0.001 would produce a near-invisible sliver cube,
-      // which is never what a quick double-click was meant to produce.
-      AddToolState.height = AddToolState.baseUnitSize;
-    }
     const t = AddToolState.getCubeTransform();
     if (t) finalizeCube(t);
     AddToolState.phase = 'HOVER';
