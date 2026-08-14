@@ -4,7 +4,7 @@ import { VoxelEngine } from "../core/index.js";
 import { Transform, ColorComp, NodeMeta, NameComp, EditorContext, getSelection, getPrimarySelection } from "./state.js";
 import History from "./history.js";
 import { buildCubeMesh, buildGridLines, interleaveLine, buildOutlineForEid, buildOutlineForTransform, buildGizmoGeometry, buildRotateGizmoGeometry, buildScaleGizmoGeometry, gizmoArmLength, GIZMO_AXES } from "./geometry.js";
-import { AddToolState, spawnInstantCube } from "./tool-add.js";
+import { AddToolState, spawnInstantCube, buildHoverFaceGrid, setSnapEnabled } from "./tool-add.js";
 import { uploadMesh, rebuildMesh, readTransform, writeTransform, hexToRgb01, rgb01ToHex, addCube, addGroup, deleteSelected, duplicateSelected, renameNode, commitTransform, selectNode, getVirtualPivot } from "./scene-ops.js";
 import { refreshOutliner } from "./ui/outliner.js";
 import { syncPropertyInputs } from "./ui/properties.js";
@@ -123,7 +123,8 @@ window.addEventListener('unhandledrejection', (e) =>
 // -----------------------------------------------------------------------
 // Toolbar wiring
 // -----------------------------------------------------------------------
-$('btn-add-cube').addEventListener('click', () => setGizmoModeAndSync('add'));
+$('btn-add-cube-snap').addEventListener('click', () => activateAddTool(true));
+$('btn-add-cube-free').addEventListener('click', () => activateAddTool(false));
 $('btn-add-group').addEventListener('click', addGroup);
 $('btn-delete').addEventListener('click', deleteSelected);
 $('btn-duplicate').addEventListener('click', duplicateSelected);
@@ -131,12 +132,32 @@ $('btn-undo').addEventListener('click', () => History.undo());
 $('btn-redo').addEventListener('click', () => History.redo());
 $('btn-export').addEventListener('click', exportScene);
 
+// Two selectable Add Tool "flavors" so the person can try both feels and
+// pick a preference, rather than only having one fixed default:
+//  - snap=true:  grid-snapped drag (voxel/blocky building, old default)
+//  - snap=false: free/continuous drag (rectangles, decimal sizes)
+// Both share the exact same underlying tool (tool-add.js) - only the
+// default snapEnabled differs - so switching between them mid-session is
+// just a one-click preference change, not two separate code paths.
+function activateAddTool(snap) {
+  setSnapEnabled(snap);
+  setGizmoModeAndSync('add');
+}
+
 function setGizmoModeAndSync(mode) {
   setGizmoMode(mode);
-  for (const [id, m] of [['btn-gizmo-translate', 'translate'], ['btn-gizmo-rotate', 'rotate'], ['btn-gizmo-scale', 'scale'], ['btn-add-cube', 'add']]) {
+  for (const [id, m] of [['btn-gizmo-translate', 'translate'], ['btn-gizmo-rotate', 'rotate'], ['btn-gizmo-scale', 'scale']]) {
     const btn = document.getElementById(id);
     if (btn) btn.classList.toggle('gizmo-mode-active', m === mode);
   }
+  // The two Add Tool buttons both represent gizmo mode 'add', but only one
+  // should highlight at a time - whichever matches the CURRENT snap
+  // preference - so the toolbar reflects which variant is active, not just
+  // that "some add mode" is active.
+  const snapBtn = document.getElementById('btn-add-cube-snap');
+  const freeBtn = document.getElementById('btn-add-cube-free');
+  if (snapBtn) snapBtn.classList.toggle('gizmo-mode-active', mode === 'add' && AddToolState.snapEnabled);
+  if (freeBtn) freeBtn.classList.toggle('gizmo-mode-active', mode === 'add' && !AddToolState.snapEnabled);
 }
 $('btn-gizmo-translate').addEventListener('click', () => setGizmoModeAndSync('translate'));
 $('btn-gizmo-rotate').addEventListener('click', () => setGizmoModeAndSync('rotate'));
@@ -305,6 +326,13 @@ async function main() {
       }
 
       if (AddToolState.active && AddToolState.currentPoint) {
+        // Blender-style hover overlay: only relevant during HOVER (before a
+        // drag defines an actual box), so it doesn't fight visually with
+        // the box outline drawn below once DRAW_BASE/EXTRUDE take over.
+        if (AddToolState.phase === 'HOVER') {
+          const hoverGrid = buildHoverFaceGrid();
+          if (hoverGrid) debugData.lines.push({ data: hoverGrid, depthTest: true });
+        }
         const t = AddToolState.getCubeTransform();
         if (t) {
           const outline = buildOutlineForTransform(t);

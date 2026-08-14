@@ -4,6 +4,7 @@ import { screenToRay, closestParamsBetweenLines } from "./camera-input.js";
 import { createNodeRaw, destroyNodeRaw, selectNode } from "./scene-ops.js";
 import { getPrimarySelection, NodeMeta, EditorContext } from "./state.js";
 import History from "./history.js";
+import { interleaveLine } from "./geometry.js";
 import { loadAddToolSettings, saveAddToolSettings, DEFAULT_PALETTE, DEFAULT_UNIT_SIZE, DEFAULT_SNAP_ENABLED } from "./settings.js";
 
 const settings = loadAddToolSettings();
@@ -90,6 +91,14 @@ export const AddToolState = {
    */
   worldToTarget(worldPoint) {
     return mat3Apply(this.targetRinv(), vSub(worldPoint, this.targetPivot));
+  },
+
+  /** Inverse of worldToTarget() - maps a point in the target surface's
+   * local (de-rotated, re-anchored) frame back to world space. Used for
+   * drawing things that live in local space (like the hover face grid
+   * overlay) back onto the actual rotated/offset target surface. */
+  targetToWorld(localPoint) {
+    return vAdd(mat3Apply(rotationMat3(...this.targetRotation), localPoint), this.targetPivot);
   },
 
   /**
@@ -372,6 +381,50 @@ export function spawnInstantCube() {
     r, g, b
   };
   finalizeCube(t);
+}
+
+/**
+ * Builds a small grid patch of line geometry drawn flat on the currently
+ * hovered target surface, in world space - purely a visual reference of
+ * scale/orientation (like Blender's overlay in its Interactive Add tool),
+ * it does NOT enforce or represent actual snapping (drag can still be
+ * free-form if snapEnabled is off; see resolvePoint()). Returns null when
+ * there's nothing valid to draw on (not hovering, or not in HOVER phase).
+ */
+export function buildHoverFaceGrid() {
+  if (AddToolState.phase !== 'HOVER' || !AddToolState.currentPoint) return null;
+  const unit = AddToolState.baseUnitSize;
+  const n = AddToolState.localNormal;
+  const axisIdx = n.findIndex((v) => Math.abs(v) > 0.5);
+  if (axisIdx < 0) return null;
+  const [ia, ib] = [0, 1, 2].filter((i) => i !== axisIdx);
+  const center = AddToolState.currentPoint;
+  const baseA = Math.floor(center[ia] / unit) * unit;
+  const baseB = Math.floor(center[ib] / unit) * unit;
+  const half = 3; // 3 cells each direction -> 6x6 patch around the cursor
+  const pos = [], col = [];
+  const gridColor = [0.95, 0.95, 1];
+
+  for (let i = -half; i <= half; i++) {
+    const aVal = baseA + i * unit;
+    const p0 = [0, 0, 0], p1 = [0, 0, 0];
+    p0[axisIdx] = p1[axisIdx] = center[axisIdx];
+    p0[ia] = p1[ia] = aVal;
+    p0[ib] = baseB - half * unit;
+    p1[ib] = baseB + half * unit;
+    pos.push(...AddToolState.targetToWorld(p0), ...AddToolState.targetToWorld(p1));
+    col.push(...gridColor, ...gridColor);
+
+    const bVal = baseB + i * unit;
+    const q0 = [0, 0, 0], q1 = [0, 0, 0];
+    q0[axisIdx] = q1[axisIdx] = center[axisIdx];
+    q0[ib] = q1[ib] = bVal;
+    q0[ia] = baseA - half * unit;
+    q1[ia] = baseA + half * unit;
+    pos.push(...AddToolState.targetToWorld(q0), ...AddToolState.targetToWorld(q1));
+    col.push(...gridColor, ...gridColor);
+  }
+  return interleaveLine(pos, col);
 }
 
 function finalizeCube(t) {
