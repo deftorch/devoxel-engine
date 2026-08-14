@@ -6,6 +6,68 @@
 
 ---
 
+## Prinsip Desain — "Cube Purity" (diadaptasi dari referensi CubeForge)
+
+Devoxel Cube Editor secara organik sudah mengikuti prinsip ini sejak awal (satu primitive, transform bebas, tanpa vertex editing) — bagian ini menuliskannya secara eksplisit supaya jadi **kriteria keputusan yang bisa dirujuk balik**, bukan sekadar kebetulan arsitektur. Tujuannya melindungi proyek dari *feature creep* seiring bertambahnya fitur.
+
+### Yang menjadi identitas inti (tidak untuk dikompromikan)
+
+- **Satu primitive: Kubus.** Tidak ada sphere/cylinder/plane/primitive lain sebagai objek yang bisa diedit. Grup (`isGroup`) bukan primitive baru — dia cuma wadah organisasi Outliner, tanpa geometri sendiri.
+- **Transform-only, bukan mesh editing.** Tidak ada vertex/edge/face editing, tidak ada extrude yang mengubah topologi kubus itu sendiri (Smart Extrude di Fase 6.10 **membuat kubus baru**, bukan mengubah kubus lama jadi non-kubus — ini konsisten dengan prinsip ini). Tidak ada subdivision, bevel, boolean merge yang menggabungkan geometri.
+- **Setiap objek SELALU kubus.** Non-uniform scale (jadi balok/plane tipis) tetap sah — itu transform, bukan mengubah topologi. Yang dilarang adalah operasi yang mengubah jumlah/susunan vertex sebuah kubus.
+- **Fokus ke kecepatan workflow transform**, bukan jumlah fitur. Setiap penambahan harus mempercepat kerja dengan kubus, bukan menambah kemampuan generik yang tidak terkait.
+
+### Template keputusan untuk usulan fitur baru
+
+Sebelum menambah fitur, tanya 3 hal (versi ringkas dari template CubeForge, disesuaikan konteks Devoxel):
+1. Apakah tetap "kubus murni" — tidak menambah primitive lain atau mesh editing?
+2. Apakah mempercepat/mempermudah kerja dengan kubus (transform, seleksi, penyusunan, workflow), atau menambah kapabilitas yang tidak berhubungan?
+3. Kalau ini butuh vertex/edge/mesh editing untuk diimplementasikan dengan benar — **tolak**, arahkan ke tool lain (Blender dkk) alih-alih memaksakan.
+
+Contoh penerapan konkret:
+- ✅ "Array tool sepanjang sumbu" — mempercepat workflow, output tetap kubus individual, tidak menyentuh topologi. Diterima.
+- ✅ "Snap 15°/45°/90° saat rotate" — mempercepat transform. Diterima.
+- ❌ "Bevel sudut kubus" — mengubah kubus jadi bukan-kubus (butuh vertex baru). Ditolak.
+- ❌ "Boolean subtract untuk melubangi kubus" — mengubah topologi/merge geometri. Ditolak (beda dengan Smart Extrude yang cuma menempatkan kubus baru).
+- ⚠️ "Loop/Ring selection" (dari referensi CubeForge) — konsep ini aslinya untuk mesh edge-loop, tidak otomatis punya makna jelas untuk kumpulan kubus independen. Perlu didefinisikan ulang artinya untuk Devoxel dulu sebelum diadopsi (mis. "pilih kubus-kubus yang sejajar dalam satu garis/array"), bukan diadopsi mentah-mentah.
+
+### Yang secara sadar TIDAK dikejar (beda skala dari fitur editor)
+
+Beberapa hal di referensi CubeForge bukan soal "murni kubus atau tidak", tapi soal skala investasi yang jauh di luar cakupan proyek editor tunggal ini — dicatat di sini supaya jelas kenapa tidak masuk roadmap fitur biasa:
+- **Marketplace/asset library, plugin API, komunitas/forum** — ini keputusan infrastruktur produk (server, akun, moderasi), bukan fitur editor.
+- **Rewrite ke stack native (Rust/Bevy/wgpu)** — Devoxel sudah punya arah sendiri (browser, JS, tanpa build step) yang punya trade-off berbeda (aksesibilitas via link vs performa native); mengganti stack adalah keputusan proyek yang terpisah dari roadmap fitur.
+- **Target performa "10.000 kubus @ 60fps"** — dicatat sebagai insight teknis: renderer editor saat ini 1 draw call per kubus (bukan lewat `GreedyMesher`, yang dipakai sistem voxel-world terpisah di `src/game/main.js` dan tidak relevan untuk kubus yang bebas dirotasi). Untuk benar-benar mengejar target ini perlu **GPU instancing** — perubahan arsitektur render, bukan fitur kecil. Ditunda sampai ada kebutuhan nyata (jumlah kubus di scene benar-benar jadi bottleneck).
+
+---
+
+## Arah Pengembangan — Peta Fitur (diadaptasi dari referensi CubeForge)
+
+Pemetaan fitur dari kategori CubeForge terhadap kondisi Devoxel saat ini, dan urutan prioritas yang disarankan. Status akan diperbarui seiring fitur benar-benar dikerjakan (jangan disamakan dengan checklist Fase 6.x di bawah, yang mencatat histori implementasi rinci).
+
+| Kategori | Status | Catatan |
+|---|---|---|
+| Transform G/R/S + constraint sumbu | ✅ Ada | Fase 6.5 (gizmo) + 6.10 (modal ala Blender) |
+| Non-uniform scale, pivot custom | ✅ Ada | |
+| Box/marquee select, multi-select | ✅ Ada | Fase 6.1-6.3 |
+| Snap grid + snap ke wajah objek lain (saat Add) | ✅ Ada | Smart Extrude, Fase 6.10 |
+| Undo/redo batched | ✅ Ada | Fase 6.2-6.4 |
+| Export/Import | ⚠️ Sebagian | Cuma JSON native, belum OBJ/GLTF/STL |
+| **Array/Pattern tools** (Linear/Grid/Circular) | ❌ Belum | **Prioritas 1** — dampak kecepatan modeling paling besar untuk usaha sedang |
+| **Mirror/Symmetry** | ❌ Belum | **Prioritas 2** |
+| **Snap objek-ke-objek saat Translate** (bukan cuma saat Add) | ❌ Belum | **Prioritas 3** — perpanjangan alami dari Smart Extrude |
+| Input angka presisi saat modal transform (`G X 3 Enter`) | ❌ Belum | Murah, menyambung langsung ke Fase 6.10 |
+| Layer system | ❌ Belum | Saat ini cuma grup hierarki di Outliner |
+| Select by criteria / select similar | ❌ Belum | |
+| Randomization tools (scale/rotasi/posisi/warna acak dalam rentang) | ❌ Belum | Pelengkap alami untuk Array tools |
+| Loop/Ring selection | ⚠️ Perlu didefinisikan ulang | Lihat catatan template keputusan di atas |
+| Material PBR (metallic/roughness/emission), lighting, AO/shadow | ❌ Belum | **Diverifikasi langsung ke shader** (`webgpu/shader.wgsl.js`): saat ini cuma hemisphere-ambient + 1 directional light tetap (arah & warna hardcoded), tanpa uniform material apa pun selain warna per-vertex, tanpa shadow mapping. PBR sungguhan butuh menambah uniform material per-kubus + rewrite shader — bukan penambahan kecil. |
+| Animation timeline/keyframe | ❌ Belum | Scope besar, belum ada kebutuhan konkret |
+| Marketplace, plugin API, komunitas | — | Di luar cakupan roadmap fitur editor (lihat bagian Prinsip Desain) |
+
+---
+
+
+
 ## Fase 0 — Baseline & Safety Net
 
 Sebelum menyentuh arsitektur apa pun.
