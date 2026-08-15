@@ -154,12 +154,14 @@ export function gizmoArmLength() {
 
 const GIZMO_HEAD_SEGMENTS = 12;
 const ROTATE_RING_SEGMENTS = 48;
-export function buildRotateGizmoGeometry(pivot) {
+export function buildRotateGizmoGeometry(pivot, hoveredAxis = null) {
   const linePos = [], lineCol = [];
   const armLen = gizmoArmLength();
   const radius = armLen * 0.85;
 
   for (const ax of GIZMO_AXES) {
+    const isHovered = ax.key === hoveredAxis;
+    const color = isHovered ? [1, 1, 0.4] : ax.color;
     const ref = Math.abs(ax.dir[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
     const p1 = vNorm(vCross(ax.dir, ref));
     const p2 = vCross(ax.dir, p1);
@@ -169,22 +171,24 @@ export function buildRotateGizmoGeometry(pivot) {
       const p0 = vAdd(pivot, vAdd(vScale(p1, Math.cos(a0) * radius), vScale(p2, Math.sin(a0) * radius)));
       const p3 = vAdd(pivot, vAdd(vScale(p1, Math.cos(a1) * radius), vScale(p2, Math.sin(a1) * radius)));
       linePos.push(...p0, ...p3);
-      lineCol.push(...ax.color, ...ax.color);
+      lineCol.push(...color, ...color);
     }
   }
   return { lineData: interleaveLine(new Float32Array(linePos), new Float32Array(lineCol)) };
 }
 
-export function buildScaleGizmoGeometry(pivot) {
+export function buildScaleGizmoGeometry(pivot, hoveredAxis = null) {
   const linePos = [], lineCol = [];
   const triPos = [], triCol = [];
   const armLen = gizmoArmLength();
   const shaftEndFrac = 0.8, handleSize = armLen * 0.08;
 
   for (const ax of GIZMO_AXES) {
+    const isHovered = ax.key === hoveredAxis;
+    const color = isHovered ? [1, 1, 0.4] : ax.color;
     const tip = vAdd(pivot, vScale(ax.dir, armLen * shaftEndFrac));
     linePos.push(...pivot, ...tip);
-    lineCol.push(...ax.color, ...ax.color);
+    lineCol.push(...color, ...color);
 
     // Small cube handle centered on the tip, to visually distinguish
     // Scale mode from Translate's cone-tipped arrows.
@@ -209,7 +213,7 @@ export function buildScaleGizmoGeometry(pivot) {
     for (const f of faces) {
       const [a, b, c, d] = f.map((i) => corners[i]);
       triPos.push(...a, ...b, ...c, ...a, ...c, ...d);
-      triCol.push(...ax.color, ...ax.color, ...ax.color, ...ax.color, ...ax.color, ...ax.color);
+      triCol.push(...color, ...color, ...color, ...color, ...color, ...color);
     }
   }
   return {
@@ -217,16 +221,19 @@ export function buildScaleGizmoGeometry(pivot) {
     triData: interleaveLine(new Float32Array(triPos), new Float32Array(triCol)),
   };
 }
-export function buildGizmoGeometry(pivot) {
+export function buildGizmoGeometry(pivot, hoveredAxis = null) {
   const linePos = [], lineCol = [];
   const triPos = [], triCol = [];
   const armLen = gizmoArmLength();
   const shaftEndFrac = 0.8, tipFrac = 1.0, headRadius = armLen * 0.05;
 
   for (const ax of GIZMO_AXES) {
+    const isHovered = ax.key === hoveredAxis;
+    const color = isHovered ? [1, 1, 0.4] : ax.color;
+    
     const shaftEnd = vAdd(pivot, vScale(ax.dir, armLen * shaftEndFrac));
     linePos.push(...pivot, ...shaftEnd);
-    lineCol.push(...ax.color, ...ax.color);
+    lineCol.push(...color, ...color);
 
     const tip = vAdd(pivot, vScale(ax.dir, armLen * tipFrac));
     const ref = Math.abs(ax.dir[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
@@ -243,7 +250,7 @@ export function buildGizmoGeometry(pivot) {
       const a = basePts[i],
         b = basePts[(i + 1) % GIZMO_HEAD_SEGMENTS];
       triPos.push(...tip, ...a, ...b);
-      triCol.push(...ax.color, ...ax.color, ...ax.color);
+      triCol.push(...color, ...color, ...color);
     }
   }
   return {

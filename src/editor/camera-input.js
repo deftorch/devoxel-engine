@@ -378,6 +378,8 @@ function hideMarquee() {
   if (box) box.style.display = 'none';
 }
 
+export let hoveredGizmoAxis = null;
+
 export function initCameraInput(canvas) {
   let inputMode = null; // 'orbit' | 'pan' | 'gizmo' | 'marquee' | null
   let lastMouse = [0, 0];
@@ -529,12 +531,28 @@ export function initCameraInput(canvas) {
        }
     }
 
+    if (!inputMode) {
+      const pivot = getVirtualPivot();
+      let hit = null;
+      if (pivot) {
+        if (gizmoMode === 'translate') hit = pickGizmoAxis(e.clientX, e.clientY, canvas);
+        else if (gizmoMode === 'rotate') hit = pickRotateRing(e.clientX, e.clientY, canvas);
+        else if (gizmoMode === 'scale') hit = pickScaleHandle(e.clientX, e.clientY, canvas);
+      }
+      const newHover = hit ? hit.axis : null;
+      if (hoveredGizmoAxis !== newHover) {
+        hoveredGizmoAxis = newHover;
+        // The render loop in editor.js continuously runs requestAnimationFrame, so it will pick up this change automatically.
+      }
+    }
+
     if (inputMode === 'gizmo' && gizmoDrag) {
       const { ro, rd } = screenToRay(e.clientX, e.clientY, canvas);
       if (gizmoDrag.mode === 'translate') {
         const cp = closestParamsBetweenLines(gizmoDrag.pivot, gizmoDrag.dir, ro, rd);
         if (cp) {
-          const delta = cp.s - gizmoDrag.startS;
+          let delta = cp.s - gizmoDrag.startS;
+          if (e.ctrlKey) delta = Math.round(delta); // Snap to nearest integer unit
           for (const st of gizmoDrag.startTransforms) {
             const t = { ...st.t };
             t.ox += gizmoDrag.dir[0] * delta;
@@ -552,10 +570,11 @@ export function initCameraInput(canvas) {
         const hitPoint = rayPlaneIntersect(ro, rd, gizmoDrag.pivot, gizmoDrag.dir);
         if (hitPoint) {
           const currentAngle = angleAroundAxis(vSub(hitPoint, gizmoDrag.pivot), gizmoDrag.p1, gizmoDrag.p2);
-          const deltaAngle = currentAngle - gizmoDrag.startAngle;
-          // deltaR is an elementary world-axis rotation (axis is always a
-          // unit X/Y/Z gizmo axis), so we can build it directly instead of
-          // a general Rodrigues axis-angle formula.
+          let deltaAngle = currentAngle - gizmoDrag.startAngle;
+          if (e.ctrlKey) {
+            const step = Math.PI / 12; // Snap to 15 degrees
+            deltaAngle = Math.round(deltaAngle / step) * step;
+          }
           const deltaR =
             gizmoDrag.axis === 'x' ? rotationMat3(deltaAngle * 180 / Math.PI, 0, 0) :
             gizmoDrag.axis === 'y' ? rotationMat3(0, deltaAngle * 180 / Math.PI, 0) :
@@ -585,10 +604,8 @@ export function initCameraInput(canvas) {
       } else if (gizmoDrag.mode === 'scale') {
         const cp = closestParamsBetweenLines(gizmoDrag.pivot, gizmoDrag.dir, ro, rd);
         if (cp) {
-          // Ratio of current handle distance to where the drag started —
-          // dragging away from the pivot grows the box, dragging past it
-          // shrinks/flips it. Clamped so k never collapses to <= 0.
-          const k = Math.max(0.05, cp.s / gizmoDrag.startS);
+          let k = Math.max(0.05, cp.s / gizmoDrag.startS);
+          if (e.ctrlKey) k = Math.max(0.1, Math.round(k * 2) / 2); // Snap to 0.5 multipliers
           for (const st of gizmoDrag.startTransforms) {
             // Scale is applied in the object's own PRE-rotation local space
             // (ox/sx live there, same as px — see readTransform/writeTransform),

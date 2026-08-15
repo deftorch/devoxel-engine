@@ -9,7 +9,7 @@ import { uploadMesh, rebuildMesh, readTransform, writeTransform, hexToRgb01, rgb
 import { refreshOutliner } from "./ui/outliner.js";
 import { syncPropertyInputs } from "./ui/properties.js";
 import { initAddToolSettingsPanel } from "./ui/add-tool-settings.js";
-import { cameraBasis, getFovY, initCameraInput, getGizmoMode, setGizmoMode, modalTransform, startModalTransform, handleModalConstraint, endModalTransform } from "./camera-input.js";
+import { cameraBasis, getFovY, initCameraInput, getGizmoMode, setGizmoMode, modalTransform, startModalTransform, handleModalConstraint, endModalTransform, hoveredGizmoAxis } from "./camera-input.js";
 import { exportScene, importScene } from "./io.js";
 import { vAdd, vSub, vScale, vCross, vDot, vNorm, rotationMat3, mat3Apply, mat4Perspective, mat4LookAt, mat4Multiply } from "../core/utils/math.js?v=2";
 
@@ -391,9 +391,9 @@ async function main() {
           const mode = getGizmoMode();
           if (mode !== 'add') {
             const gizmoGeo =
-              mode === 'rotate' ? buildRotateGizmoGeometry(virtualPivot) :
-              mode === 'scale' ? buildScaleGizmoGeometry(virtualPivot) :
-              buildGizmoGeometry(virtualPivot);
+              mode === 'rotate' ? buildRotateGizmoGeometry(virtualPivot, hoveredGizmoAxis) :
+              mode === 'scale' ? buildScaleGizmoGeometry(virtualPivot, hoveredGizmoAxis) :
+              buildGizmoGeometry(virtualPivot, hoveredGizmoAxis);
             debugData.lines.push({ data: gizmoGeo.lineData, depthTest: false }); // X-ray
             if (gizmoGeo.triData) debugData.tris.push({ data: gizmoGeo.triData, depthTest: false });
           }
