@@ -81,6 +81,8 @@ export function refreshProperties() {
   let dragStartT = null;
   for (const [key, id] of Object.entries(fieldMap)) {
     const input = document.getElementById(id);
+    const label = input.previousElementSibling;
+
     input.addEventListener('focus', () => {
       dragStartT = readTransform(eid);
     });
@@ -95,20 +97,56 @@ export function refreshProperties() {
       if (dragStartT) commitTransform(eid, dragStartT, newT);
       dragStartT = null;
     });
+
+    // Figma-style drag scrub on the label
+    if (label && label.classList.contains('field-label')) {
+      label.style.cursor = 'ew-resize';
+      label.title = "Geser kiri/kanan untuk mengubah nilai (Tahan Shift untuk presisi)";
+      
+      label.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        input.focus();
+        
+        const startX = e.clientX;
+        const startVal = parseFloat(input.value) || 0;
+        let hasMoved = false;
+
+        const onMove = (moveEvent) => {
+          hasMoved = true;
+          const dx = moveEvent.clientX - startX;
+          const multiplier = moveEvent.shiftKey ? 0.05 : 0.5;
+          input.value = (startVal + dx * multiplier).toFixed(2);
+          input.dispatchEvent(new Event('input'));
+        };
+
+        const onUp = () => {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          document.body.style.cursor = '';
+          if (hasMoved) input.dispatchEvent(new Event('change'));
+        };
+
+        document.body.style.cursor = 'ew-resize';
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+    }
   }
+
   let colorStartT = null;
-  document.getElementById('p-color').addEventListener('mousedown', () => {
+  const colorInput = document.getElementById('p-color');
+  colorInput.addEventListener('mousedown', () => {
     colorStartT = readTransform(eid);
   });
-  document.getElementById('p-color').addEventListener('input', () => {
+  colorInput.addEventListener('input', () => {
     if (!colorStartT) colorStartT = readTransform(eid);
     const t = readTransform(eid);
-    const [r, g, b] = hexToRgb01(document.getElementById('p-color').value);
+    const [r, g, b] = hexToRgb01(colorInput.value);
     t.r = r; t.g = g; t.b = b;
     writeTransform(eid, t);
     rebuildMesh(eid);
   });
-  document.getElementById('p-color').addEventListener('change', () => {
+  colorInput.addEventListener('change', () => {
     const newT = readTransform(eid);
     if (colorStartT) commitTransform(eid, colorStartT, newT);
     colorStartT = null;
