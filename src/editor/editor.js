@@ -5,7 +5,7 @@ import { Transform, ColorComp, NodeMeta, NameComp, EditorContext, getSelection, 
 import History from "./history.js";
 import { buildCubeMesh, buildGridLines, interleaveLine, buildOutlineForEid, buildOutlineForTransform, buildGizmoGeometry, buildRotateGizmoGeometry, buildScaleGizmoGeometry, gizmoArmLength, GIZMO_AXES } from "./geometry.js";
 import { AddToolState, spawnInstantCube, buildHoverFaceGrid, setSnapEnabled, getMirroredTransforms } from "./tool-add.js";
-import { uploadMesh, rebuildMesh, readTransform, writeTransform, hexToRgb01, rgb01ToHex, addCube, addGroup, deleteSelected, duplicateSelected, renameNode, commitTransform, selectNode, getVirtualPivot, symmetrizeSelected } from "./scene-ops.js";
+import { uploadMesh, rebuildMesh, readTransform, writeTransform, hexToRgb01, rgb01ToHex, addCube, addGroup, deleteSelected, duplicateSelected, renameNode, commitTransform, selectNode, getVirtualPivot, symmetrizeSelected, getAllDescendants } from "./scene-ops.js";
 import { refreshOutliner } from "./ui/outliner.js";
 import { syncPropertyInputs } from "./ui/properties.js";
 import { initAddToolSettingsPanel } from "./ui/add-tool-settings.js";
@@ -369,7 +369,7 @@ async function main() {
       debugData.lines.push({ data: gridVertexData, depthTest: true });
 
       // 2. Gizmo & Outline (jika ada seleksi)
-      const selectedEids = getSelection();
+      const selectedEids = getAllDescendants(Array.from(getSelection()));
       for (const eid of selectedEids) {
         if (NodeMeta.isGroup[eid]) continue;
         const outlineData = buildOutlineForEid(eid);

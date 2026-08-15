@@ -1,6 +1,6 @@
 import { vAdd, vSub, vScale, vCross, vNorm, vDot, rayPlaneIntersect, mat3ToEulerXYZ, mat3Mul, mat3Apply, rotationMat3, projectToScreen, mat4LookAt, mat4Perspective, mat4Multiply } from "../core/utils/math.js?v=2";
 import { EditorContext, NodeMeta, getSelection } from "./state.js";
-import { readTransform, writeTransform, rebuildMesh, getVirtualPivot, getMirrorCounterpartsMap } from "./scene-ops.js";
+import { readTransform, writeTransform, rebuildMesh, getVirtualPivot, getMirrorCounterpartsMap, getAllDescendants } from "./scene-ops.js";
 import { syncPropertyInputs } from "./ui/properties.js";
 import { GIZMO_AXES, gizmoArmLength } from "./geometry.js";
 import { pickAtScreen, frustumSelect } from "./picking.js";
@@ -41,8 +41,11 @@ export function startModalTransform(mode, canvas) {
   const pivot = getVirtualPivot();
   if (!pivot) return;
 
+  // Get selection and all descendants for group transforms
+  const expandedSelection = getAllDescendants(selection);
+
   const startTransforms = [];
-  for (const eid of selection) {
+  for (const eid of expandedSelection) {
     if (!NodeMeta.isGroup[eid]) {
       startTransforms.push({ eid, t: readTransform(eid) });
     }
@@ -414,8 +417,9 @@ export function initCameraInput(canvas) {
       }
       if (hit) {
         inputMode = 'gizmo';
+        const expandedSelection = getAllDescendants(selection);
         const startTransforms = [];
-        for (const eid of selection) {
+        for (const eid of expandedSelection) {
           if (!NodeMeta.isGroup[eid]) {
             startTransforms.push({ eid, t: readTransform(eid) });
           }

@@ -1,5 +1,17 @@
-import { ColorComp, NodeMeta, NameComp, EditorContext, getSelection } from "../state.js";
-import { renameNode, selectNode, rgb01ToHex } from "../scene-ops.js";
+import { ColorComp, NodeMeta, NameComp, EditorContext, getSelection, setSelection } from "../state.js";
+import { renameNode, selectNode, rgb01ToHex, reparentNodes, syncSelectionUI } from "../scene-ops.js";
+
+const collapsedGroups = new Set();
+let lastSelectedEid = -1;
+
+function isHidden(eid) {
+  let p = NodeMeta.parent[eid];
+  while (p >= 0) {
+    if (collapsedGroups.has(p)) return true;
+    p = NodeMeta.parent[p];
+  }
+  return false;
+}
 
 function escapeHtml(s) {
   return s.replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]);
@@ -24,16 +36,100 @@ export function refreshOutliner() {
     outlinerList.innerHTML = `<div id="outliner-empty">Kosong. Klik "＋ Cube" di toolbar untuk mulai.</div>`;
   } else {
     for (const eid of EditorContext.sceneOrder) {
+      if (isHidden(eid)) continue;
+
       const isSelected = Array.from(getSelection()).includes(eid);
       const row = document.createElement('div');
       row.className = 'node-row' + (isSelected ? ' selected' : '');
       row.style.paddingLeft = 10 + depthOf(eid) * 14 + 'px';
       row.dataset.eid = eid;
       const isGroup = !!NodeMeta.isGroup[eid];
+      
+      const arrow = collapsedGroups.has(eid) ? '▸' : '▾';
       row.innerHTML = isGroup
-        ? `<span class="icon">▸</span><span class="name">${escapeHtml(NameComp.value[eid])}</span>`
+        ? `<span class="icon group-toggle">${arrow}</span><span class="name">${escapeHtml(NameComp.value[eid])}</span>`
         : `<span class="swatch" style="background:${rgb01ToHex(ColorComp.r[eid], ColorComp.g[eid], ColorComp.b[eid])}"></span><span class="name">${escapeHtml(NameComp.value[eid])}</span>`;
-      row.addEventListener('click', () => selectNode(eid));
+      
+      row.addEventListener('click', (e) => {
+        const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+        const ctrlKey = isMac ? e.metaKey : e.ctrlKey;
+        
+        if (e.shiftKey && lastSelectedEid >= 0) {
+          // Range selection
+          const visibleEids = [];
+          for (const ev of EditorContext.sceneOrder) {
+            if (!isHidden(ev)) visibleEids.push(ev);
+          }
+          const idx1 = visibleEids.indexOf(lastSelectedEid);
+          const idx2 = visibleEids.indexOf(eid);
+          
+          if (idx1 >= 0 && idx2 >= 0) {
+            const start = Math.min(idx1, idx2);
+            const end = Math.max(idx1, idx2);
+            const newSel = new Set(ctrlKey ? getSelection() : []);
+            for (let i = start; i <= end; i++) newSel.add(visibleEids[i]);
+            setSelection(Array.from(newSel));
+            syncSelectionUI();
+          } else {
+            selectNode(eid, ctrlKey);
+            lastSelectedEid = eid;
+          }
+        } else {
+          selectNode(eid, ctrlKey);
+          lastSelectedEid = eid;
+        }
+      });
+      
+      const toggleEl = row.querySelector('.group-toggle');
+      if (toggleEl) {
+        toggleEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (collapsedGroups.has(eid)) collapsedGroups.delete(eid);
+          else collapsedGroups.add(eid);
+          refreshOutliner();
+        });
+      }
+
+      // Drag and drop
+      row.draggable = true;
+      row.addEventListener('dragstart', (e) => {
+        e.dataTransfer.setData('text/plain', eid);
+        e.dataTransfer.effectAllowed = 'move';
+        row.style.opacity = '0.5';
+      });
+      row.addEventListener('dragend', () => {
+        row.style.opacity = '1';
+      });
+      row.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        row.style.borderBottom = '1px solid #7fd4ff';
+        row.style.paddingBottom = '1px';
+      });
+      row.addEventListener('dragleave', () => {
+        row.style.borderBottom = 'none';
+        row.style.paddingBottom = '2px';
+      });
+      row.addEventListener('drop', (e) => {
+        e.preventDefault();
+        row.style.borderBottom = 'none';
+        row.style.paddingBottom = '2px';
+        const draggedEid = parseInt(e.dataTransfer.getData('text/plain'), 10);
+        if (isNaN(draggedEid) || draggedEid === eid) return;
+        
+        // Anti-cyclic logic inside UI before calling reparentNodes
+        const newParent = isGroup ? eid : NodeMeta.parent[eid];
+        let p = newParent;
+        let isCyclic = false;
+        while (p >= 0) {
+          if (p === draggedEid) { isCyclic = true; break; }
+          p = NodeMeta.parent[p];
+        }
+        
+        if (!isCyclic && NodeMeta.parent[draggedEid] !== newParent) {
+          reparentNodes([draggedEid], newParent);
+        }
+      });
+
       const nameEl = row.querySelector('.name');
       nameEl.addEventListener('dblclick', (e) => {
         e.stopPropagation();

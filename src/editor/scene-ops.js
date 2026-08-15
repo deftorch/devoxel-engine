@@ -8,7 +8,7 @@ const PALETTE = ['#7fd4ff', '#ffb27f', '#b6ff7f', '#ff7fd4', '#7fffcf', '#d4ff7f
 let paletteIdx = 0;
 
 export function getVirtualPivot() {
-  const selection = getSelection();
+  const selection = getAllDescendants(Array.from(getSelection()));
   if (selection.length === 0) return null;
   let cx = 0, cy = 0, cz = 0, count = 0;
   for (const eid of selection) {
@@ -105,6 +105,8 @@ export function createNodeRaw(data) {
   const idx = data.orderIndex != null ? data.orderIndex : EditorContext.sceneOrder.length;
   EditorContext.sceneOrder.splice(idx, 0, eid);
   data.eid = eid;
+  // Auto-sort to group children together
+  rebuildSceneOrder();
   return eid;
 }
 
@@ -112,6 +114,46 @@ export function destroyNodeRaw(eid) {
   const idx = EditorContext.sceneOrder.indexOf(eid);
   if (idx >= 0) EditorContext.sceneOrder.splice(idx, 1);
   removeEntity(world, eid);
+}
+
+export function rebuildSceneOrder() {
+  const newOrder = [];
+  const map = new Map();
+  // Build parent -> children mapping based on current sceneOrder
+  for (const eid of EditorContext.sceneOrder) {
+    const parent = NodeMeta.parent[eid];
+    if (!map.has(parent)) map.set(parent, []);
+    map.get(parent).push(eid);
+  }
+  
+  // Traverse recursively preserving original sibling order
+  const traverse = (parent) => {
+    if (map.has(parent)) {
+      for (const child of map.get(parent)) {
+        newOrder.push(child);
+        traverse(child);
+      }
+    }
+  }
+  traverse(-1);
+  EditorContext.sceneOrder = newOrder;
+}
+
+export function reparentNodes(eids, newParent) {
+  const oldParents = eids.map(eid => ({ eid, parent: NodeMeta.parent[eid] }));
+  History.push({
+    label: `Reparent ${eids.length} Elements`,
+    redo() {
+      for (const eid of eids) NodeMeta.parent[eid] = newParent;
+      rebuildSceneOrder();
+      EditorContext.emit('sceneMutated');
+    },
+    undo() {
+      for (const { eid, parent } of oldParents) NodeMeta.parent[eid] = parent;
+      rebuildSceneOrder();
+      EditorContext.emit('sceneMutated');
+    }
+  });
 }
 
 /**
@@ -251,6 +293,24 @@ export function getMirroredEids(eids) {
   return Array.from(results);
 }
 
+export function getAllDescendants(eids) {
+  const result = new Set();
+  const queue = [...eids];
+  
+  while (queue.length > 0) {
+    const eid = queue.shift();
+    if (!result.has(eid)) {
+      result.add(eid);
+      for (const childEid of EditorContext.sceneOrder) {
+        if (NodeMeta.parent[childEid] === eid) {
+          queue.push(childEid);
+        }
+      }
+    }
+  }
+  return Array.from(result);
+}
+
 export function getMirrorCounterpartsMap(eids) {
   const mirror = EditorContext.mirror;
   if (!mirror.x && !mirror.y && !mirror.z) return [];
@@ -308,11 +368,17 @@ export function deleteSelected() {
   let targets = Array.from(getSelection());
   if (targets.length === 0) return;
 
-  // Jika mirror aktif, temukan semua kembarannya dan hapus sekaligus
+  // Hapus semua keturunan agar tidak ada anak yatim
+  targets = getAllDescendants(targets);
+
+  // Jika mirror aktif, temukan semua kembarannya
   const mirror = EditorContext.mirror;
   if (mirror.x || mirror.y || mirror.z) {
     targets = getMirroredEids(targets);
   }
+
+  // Sort targets so parents come before children for safe reconstruction
+  targets.sort((a, b) => EditorContext.sceneOrder.indexOf(a) - EditorContext.sceneOrder.indexOf(b));
 
   const snapshots = targets.map((eid) => ({
     eid,
@@ -326,13 +392,24 @@ export function deleteSelected() {
   History.push({
     label: targets.length > 1 ? `Delete ${targets.length} Elements` : 'Delete Element',
     redo() {
-      for (const s of snapshots) destroyNodeRaw(s.eid);
+      // Hapus dari belakang agar tidak menggeser orderIndex yang belum diproses
+      for (let i = snapshots.length - 1; i >= 0; i--) {
+        destroyNodeRaw(snapshots[i].eid);
+      }
       clearSelection();
       syncSelectionUI();
       EditorContext.emit('sceneMutated');
     },
     undo() {
-      for (const s of snapshots) createNodeRaw(s); 
+      const eidMap = new Map();
+      for (const s of snapshots) {
+        const oldEid = s.eid;
+        if (s.parent >= 0 && eidMap.has(s.parent)) {
+          s.parent = eidMap.get(s.parent);
+        }
+        createNodeRaw(s); // mutates s.eid
+        eidMap.set(oldEid, s.eid);
+      }
       setSelection(snapshots.map((s) => s.eid));
       syncSelectionUI();
       EditorContext.emit('sceneMutated');
@@ -341,32 +418,52 @@ export function deleteSelected() {
 }
 
 export function duplicateSelected() {
-  const targets = getSelection();
-  const validTargets = Array.from(targets).filter(eid => !NodeMeta.isGroup[eid]); // Only non-groups for now
-  if (validTargets.length === 0) return;
+  let targets = Array.from(getSelection());
+  if (targets.length === 0) return;
 
-  const newDatas = validTargets.map(eid => {
-    const src = readTransform(eid);
-    const t = { ...src, ox: src.ox + 1, oz: src.oz + 1, px: src.px + 1, pz: src.pz + 1 };
+  targets = getAllDescendants(targets);
+  targets.sort((a, b) => EditorContext.sceneOrder.indexOf(a) - EditorContext.sceneOrder.indexOf(b));
+
+  const newDatas = targets.map(eid => {
+    const isGroup = !!NodeMeta.isGroup[eid];
+    let t = null;
+    if (!isGroup) {
+      const src = readTransform(eid);
+      // Offset sedikit agar terlihat berbeda
+      t = { ...src, ox: src.ox + 1, oz: src.oz + 1, px: src.px + 1, pz: src.pz + 1 };
+    }
     return {
+      originalEid: eid,
       name: NameComp.value[eid] + ' copy',
       parent: NodeMeta.parent[eid],
-      isGroup: false,
+      isGroup,
       transform: t,
+      eid: -1
     };
   });
 
   History.push({
-    label: validTargets.length > 1 ? `Duplicate ${validTargets.length} Elements` : 'Duplicate',
+    label: targets.length > 1 ? `Duplicate ${targets.length} Elements` : 'Duplicate',
     redo() {
-      const createdEids = newDatas.map(data => createNodeRaw(data));
+      const eidMap = new Map();
+      const createdEids = [];
+      for (const data of newDatas) {
+        if (data.parent >= 0 && eidMap.has(data.parent)) {
+          data.parent = eidMap.get(data.parent);
+        }
+        createNodeRaw(data);
+        eidMap.set(data.originalEid, data.eid);
+        createdEids.push(data.eid);
+      }
       setSelection(createdEids);
       syncSelectionUI();
       EditorContext.emit('sceneMutated');
     },
     undo() {
-      for (const data of newDatas) destroyNodeRaw(data.eid);
-      setSelection(validTargets);
+      for (let i = newDatas.length - 1; i >= 0; i--) {
+        if (newDatas[i].eid >= 0) destroyNodeRaw(newDatas[i].eid);
+      }
+      setSelection(targets);
       syncSelectionUI();
       EditorContext.emit('sceneMutated');
     },
