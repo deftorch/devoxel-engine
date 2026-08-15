@@ -194,11 +194,127 @@ export function addGroup() {
   });
 }
 
+export function getMirroredEids(eids) {
+  const mirror = EditorContext.mirror;
+  if (!mirror.x && !mirror.y && !mirror.z) return eids;
+
+  const results = new Set(eids);
+  const pivot = mirror.pivotOffset;
+
+  for (const eid of eids) {
+    if (NodeMeta.isGroup[eid]) continue;
+    const src = readTransform(eid);
+
+    let transforms = [src];
+    
+    const applyMirror = (axis, sizeKey, posKey, rotKeys, rotSigns) => {
+      const newTransforms = [];
+      for (const t of transforms) {
+        const mirrored = { ...t };
+        const pPlane = pivot[axis === 'x' ? 0 : axis === 'y' ? 1 : 2];
+        mirrored[posKey] = pPlane * 2 - t[posKey] - t[sizeKey];
+        const pivotKey = 'p' + axis;
+        mirrored[pivotKey] = pPlane * 2 - t[pivotKey];
+
+        mirrored.rx *= rotSigns[0];
+        mirrored.ry *= rotSigns[1];
+        mirrored.rz *= rotSigns[2];
+
+        newTransforms.push(mirrored);
+      }
+      transforms = transforms.concat(newTransforms);
+    };
+
+    if (mirror.x) applyMirror('x', 'sx', 'ox', ['rx', 'ry', 'rz'], [1, -1, -1]);
+    if (mirror.y) applyMirror('y', 'sy', 'oy', ['rx', 'ry', 'rz'], [-1, 1, -1]);
+    if (mirror.z) applyMirror('z', 'sz', 'oz', ['rx', 'ry', 'rz'], [-1, -1, 1]);
+
+    for (let i = 1; i < transforms.length; i++) {
+      const targetT = transforms[i];
+      for (const otherEid of EditorContext.sceneOrder) {
+        if (results.has(otherEid) || NodeMeta.isGroup[otherEid]) continue;
+        const t = readTransform(otherEid);
+        
+        // Match position and size to find counterpart
+        if (Math.abs(t.px - targetT.px) < 0.01 &&
+            Math.abs(t.py - targetT.py) < 0.01 &&
+            Math.abs(t.pz - targetT.pz) < 0.01 &&
+            Math.abs(t.sx - targetT.sx) < 0.01 &&
+            Math.abs(t.sy - targetT.sy) < 0.01 &&
+            Math.abs(t.sz - targetT.sz) < 0.01) {
+              results.add(otherEid);
+        }
+      }
+    }
+  }
+
+  return Array.from(results);
+}
+
+export function getMirrorCounterpartsMap(eids) {
+  const mirror = EditorContext.mirror;
+  if (!mirror.x && !mirror.y && !mirror.z) return [];
+  
+  const pivot = mirror.pivotOffset;
+  const mappings = [];
+  
+  for (const eid of eids) {
+    if (NodeMeta.isGroup[eid]) continue;
+    const src = readTransform(eid);
+    
+    let transforms = [src];
+    const applyMirror = (axis, sizeKey, posKey, rotKeys, rotSigns) => {
+      const newTransforms = [];
+      for (const t of transforms) {
+        const mirrored = { ...t };
+        const pPlane = pivot[axis === 'x' ? 0 : axis === 'y' ? 1 : 2];
+        mirrored[posKey] = pPlane * 2 - t[posKey] - t[sizeKey];
+        const pivotKey = 'p' + axis;
+        mirrored[pivotKey] = pPlane * 2 - t[pivotKey];
+
+        mirrored.rx *= rotSigns[0];
+        mirrored.ry *= rotSigns[1];
+        mirrored.rz *= rotSigns[2];
+        newTransforms.push(mirrored);
+      }
+      transforms = transforms.concat(newTransforms);
+    };
+
+    if (mirror.x) applyMirror('x', 'sx', 'ox', ['rx', 'ry', 'rz'], [1, -1, -1]);
+    if (mirror.y) applyMirror('y', 'sy', 'oy', ['rx', 'ry', 'rz'], [-1, 1, -1]);
+    if (mirror.z) applyMirror('z', 'sz', 'oz', ['rx', 'ry', 'rz'], [-1, -1, 1]);
+
+    for (let i = 1; i < transforms.length; i++) {
+      const targetT = transforms[i];
+      for (const otherEid of EditorContext.sceneOrder) {
+        if (NodeMeta.isGroup[otherEid] || eids.includes(otherEid)) continue;
+        const t = readTransform(otherEid);
+        if (Math.abs(t.px - targetT.px) < 0.01 &&
+            Math.abs(t.py - targetT.py) < 0.01 &&
+            Math.abs(t.pz - targetT.pz) < 0.01 &&
+            Math.abs(t.sx - targetT.sx) < 0.01 &&
+            Math.abs(t.sy - targetT.sy) < 0.01 &&
+            Math.abs(t.sz - targetT.sz) < 0.01) {
+              mappings.push({ sourceEid: eid, counterpartEid: otherEid, transformIndex: i });
+              break;
+        }
+      }
+    }
+  }
+  return mappings;
+}
+
 export function deleteSelected() {
-  const targets = getSelection();
+  let targets = Array.from(getSelection());
   if (targets.length === 0) return;
 
-  const snapshots = Array.from(targets).map((eid) => ({
+  // Jika mirror aktif, temukan semua kembarannya dan hapus sekaligus
+  const mirror = EditorContext.mirror;
+  if (mirror.x || mirror.y || mirror.z) {
+    targets = getMirroredEids(targets);
+  }
+
+  const snapshots = targets.map((eid) => ({
     eid,
     name: NameComp.value[eid],
     parent: NodeMeta.parent[eid],
@@ -245,6 +361,77 @@ export function duplicateSelected() {
     redo() {
       const createdEids = newDatas.map(data => createNodeRaw(data));
       setSelection(createdEids);
+      syncSelectionUI();
+      EditorContext.emit('sceneMutated');
+    },
+    undo() {
+      for (const data of newDatas) destroyNodeRaw(data.eid);
+      setSelection(validTargets);
+      syncSelectionUI();
+      EditorContext.emit('sceneMutated');
+    },
+  });
+}
+
+export function symmetrizeSelected() {
+  const targets = getSelection();
+  const validTargets = Array.from(targets).filter(eid => !NodeMeta.isGroup[eid]);
+  if (validTargets.length === 0) return;
+  
+  const mirror = EditorContext.mirror;
+  if (!mirror.x && !mirror.y && !mirror.z) return; // No mirror active
+
+  const newDatas = [];
+  const pivot = mirror.pivotOffset;
+
+  for (const eid of validTargets) {
+    const src = readTransform(eid);
+    const parent = NodeMeta.parent[eid];
+    const baseName = NameComp.value[eid];
+    
+    let transforms = [src];
+    
+    const applyMirror = (axis, sizeKey, posKey, rotKeys, rotSigns) => {
+      const newTransforms = [];
+      for (const t of transforms) {
+        const mirrored = { ...t };
+        const pPlane = pivot[axis === 'x' ? 0 : axis === 'y' ? 1 : 2];
+        mirrored[posKey] = pPlane * 2 - t[posKey] - t[sizeKey];
+        const pivotKey = 'p' + axis;
+        mirrored[pivotKey] = pPlane * 2 - t[pivotKey];
+
+        mirrored.rx *= rotSigns[0];
+        mirrored.ry *= rotSigns[1];
+        mirrored.rz *= rotSigns[2];
+
+        newTransforms.push(mirrored);
+      }
+      transforms = transforms.concat(newTransforms);
+    };
+
+    if (mirror.x) applyMirror('x', 'sx', 'ox', ['rx', 'ry', 'rz'], [1, -1, -1]);
+    if (mirror.y) applyMirror('y', 'sy', 'oy', ['rx', 'ry', 'rz'], [-1, 1, -1]);
+    if (mirror.z) applyMirror('z', 'sz', 'oz', ['rx', 'ry', 'rz'], [-1, -1, 1]);
+
+    // Skip the first one since it's the original `src`
+    for (let i = 1; i < transforms.length; i++) {
+      newDatas.push({
+        name: baseName + ' (Mirrored)',
+        parent,
+        isGroup: false,
+        transform: transforms[i],
+      });
+    }
+  }
+
+  if (newDatas.length === 0) return;
+
+  History.push({
+    label: `Symmetrize ${validTargets.length} Elements`,
+    redo() {
+      const createdEids = newDatas.map(data => createNodeRaw(data));
+      // Select the newly created mirrored objects along with the originals
+      setSelection([...validTargets, ...createdEids]);
       syncSelectionUI();
       EditorContext.emit('sceneMutated');
     },

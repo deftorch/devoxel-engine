@@ -1,11 +1,11 @@
 import { vAdd, vSub, vScale, vCross, vNorm, vDot, rayPlaneIntersect, mat3ToEulerXYZ, mat3Mul, mat3Apply, rotationMat3, projectToScreen, mat4LookAt, mat4Perspective, mat4Multiply } from "../core/utils/math.js?v=2";
 import { EditorContext, NodeMeta, getSelection } from "./state.js";
-import { readTransform, writeTransform, rebuildMesh, getVirtualPivot } from "./scene-ops.js";
+import { readTransform, writeTransform, rebuildMesh, getVirtualPivot, getMirrorCounterpartsMap } from "./scene-ops.js";
 import { syncPropertyInputs } from "./ui/properties.js";
 import { GIZMO_AXES, gizmoArmLength } from "./geometry.js";
 import { pickAtScreen, frustumSelect } from "./picking.js";
 import History from "./history.js";
-import { handleAddToolPointerDown, handleAddToolPointerMove, handleAddToolPointerUp, cancelAddTool, updateAddToolHud, getPalette, AddToolState } from "./tool-add.js";
+import { handleAddToolPointerDown, handleAddToolPointerMove, handleAddToolPointerUp, cancelAddTool, updateAddToolHud, getPalette, AddToolState, getMirroredTransforms } from "./tool-add.js";
 import { saveAddToolSettings } from "./settings.js";
 
 let gizmoMode = 'translate'; // 'translate' | 'rotate' | 'scale'
@@ -46,6 +46,10 @@ export function startModalTransform(mode, canvas) {
     if (!NodeMeta.isGroup[eid]) {
       startTransforms.push({ eid, t: readTransform(eid) });
     }
+  }
+  const mirrorMap = getMirrorCounterpartsMap(startTransforms.map(st => st.eid));
+  for (const mapping of mirrorMap) {
+    startTransforms.push({ eid: mapping.counterpartEid, t: readTransform(mapping.counterpartEid), isMirror: true, sourceEid: mapping.sourceEid, transformIndex: mapping.transformIndex });
   }
 
   const { ro, rd } = screenToRay(currentMousePos[0], currentMousePos[1], canvas);
@@ -224,7 +228,23 @@ function applyModalTransform(canvas) {
     }
   }
   
-  if (modalTransform.startTransforms.length === 1) {
+  // Apply Auto-Mirror for symmetric counterparts
+  for (const st of modalTransform.startTransforms) {
+    if (st.isMirror) {
+      // Find the updated transform of the source
+      const sourceSt = modalTransform.startTransforms.find(s => s.eid === st.sourceEid);
+      if (sourceSt) {
+        const sourceCurrentT = readTransform(sourceSt.eid);
+        const mirroredList = getMirroredTransforms(sourceCurrentT);
+        if (mirroredList[st.transformIndex]) {
+          writeTransform(st.eid, mirroredList[st.transformIndex]);
+          rebuildMesh(st.eid);
+        }
+      }
+    }
+  }
+  
+  if (modalTransform.startTransforms.length === 1 || (modalTransform.startTransforms.length > 1 && !modalTransform.startTransforms[0].isMirror)) {
     syncPropertyInputs(modalTransform.startTransforms[0].eid);
   }
 }
@@ -399,6 +419,10 @@ export function initCameraInput(canvas) {
           if (!NodeMeta.isGroup[eid]) {
             startTransforms.push({ eid, t: readTransform(eid) });
           }
+        }
+        const mirrorMap = getMirrorCounterpartsMap(startTransforms.map(st => st.eid));
+        for (const mapping of mirrorMap) {
+          startTransforms.push({ eid: mapping.counterpartEid, t: readTransform(mapping.counterpartEid), isMirror: true, sourceEid: mapping.sourceEid, transformIndex: mapping.transformIndex });
         }
         if (gizmoMode === 'translate') {
           gizmoDrag = { mode: 'translate', axis: hit.axis, dir: hit.dir, startS: hit.s, startTransforms, pivot };
@@ -576,9 +600,27 @@ export function initCameraInput(canvas) {
             writeTransform(st.eid, t);
             rebuildMesh(st.eid);
           }
-          if (gizmoDrag.startTransforms.length === 1) syncPropertyInputs(gizmoDrag.startTransforms[0].eid);
+          if (gizmoDrag.startTransforms.length === 1 || (gizmoDrag.startTransforms.length > 1 && !gizmoDrag.startTransforms[0].isMirror)) {
+            syncPropertyInputs(gizmoDrag.startTransforms[0].eid);
+          }
         }
       }
+      
+      // Apply Auto-Mirror for symmetric counterparts in Gizmo
+      for (const st of gizmoDrag.startTransforms) {
+        if (st.isMirror) {
+          const sourceSt = gizmoDrag.startTransforms.find(s => s.eid === st.sourceEid);
+          if (sourceSt) {
+            const sourceCurrentT = readTransform(sourceSt.eid);
+            const mirroredList = getMirroredTransforms(sourceCurrentT);
+            if (mirroredList[st.transformIndex]) {
+              writeTransform(st.eid, mirroredList[st.transformIndex]);
+              rebuildMesh(st.eid);
+            }
+          }
+        }
+      }
+      
       lastMouse = [e.clientX, e.clientY];
       return;
     }

@@ -41,6 +41,7 @@
         border-bottom: 1px solid rgba(120, 170, 255, 0.15);
         flex: 0 0 auto;
         z-index: 2;
+        flex-wrap: wrap; /* allow wrapping if too narrow */
       }
       #toolbar .title {
         font-weight: 600;
@@ -89,7 +90,20 @@
       #toolbar .hint {
         font-size: 11px;
         color: #7f93ad;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 100%;
       }
+      .mirror-btn {
+        font-weight: 600;
+        min-width: 28px;
+        padding: 6px 8px !important;
+        justify-content: center;
+      }
+      .mirror-btn-x.active { background: #5c1818 !important; border-color: #ff4d4d !important; color: #ff8080 !important; }
+      .mirror-btn-y.active { background: #185c18 !important; border-color: #4dff4d !important; color: #80ff80 !important; }
+      .mirror-btn-z.active { background: #18185c !important; border-color: #4d4dff !important; color: #8080ff !important; }
 
       /* ---------- Body layout ---------- */
       #body {
@@ -148,7 +162,7 @@
         pointer-events: none;
         white-space: nowrap;
       }
-      #add-tool-settings-modal {
+      .settings-modal {
         position: fixed;
         inset: 0;
         z-index: 20;
@@ -156,12 +170,12 @@
         align-items: center;
         justify-content: center;
       }
-      #add-tool-settings-backdrop {
+      .settings-backdrop {
         position: absolute;
         inset: 0;
         background: rgba(5, 8, 12, 0.6);
       }
-      #add-tool-settings-panel {
+      .settings-panel {
         position: relative;
         background: #0e1520;
         border: 1px solid rgba(127, 212, 255, 0.3);
@@ -171,7 +185,7 @@
         color: #cfe8ff;
         box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
       }
-      #add-tool-settings-panel .panel-header {
+      .settings-panel .panel-header {
         margin-bottom: 12px;
       }
       .settings-row {
@@ -479,6 +493,12 @@
         <button id="btn-gizmo-scale" title="Scale (S)">⇲ Scale</button>
         <button id="btn-add-tool-settings" title="Pengaturan Add Tool">⚙ Add Tool</button>
         <div class="sep"></div>
+        <button id="btn-mirror-x" class="mirror-btn mirror-btn-x" title="Mirror X (Shift+X)">X</button>
+        <button id="btn-mirror-y" class="mirror-btn mirror-btn-y" title="Mirror Y (Shift+Y)">Y</button>
+        <button id="btn-mirror-z" class="mirror-btn mirror-btn-z" title="Mirror Z (Shift+Z)">Z</button>
+        <button id="btn-mirror-settings" title="Pengaturan Pivot Cermin" class="mirror-btn">⚙</button>
+        <button id="btn-symmetrize" title="Symmetrize terpilih berdasar mirror aktif (Shift+M)">◫ Symmetrize</button>
+        <div class="sep"></div>
         <button id="btn-undo" disabled>↶ Undo</button>
         <button id="btn-redo" disabled>↷ Redo</button>
         <div class="sep"></div>
@@ -525,9 +545,9 @@
       </div>
     </div>
 
-    <div id="add-tool-settings-modal" class="hidden">
-      <div id="add-tool-settings-backdrop"></div>
-      <div id="add-tool-settings-panel">
+    <div id="add-tool-settings-modal" class="settings-modal hidden">
+      <div id="add-tool-settings-backdrop" class="settings-backdrop"></div>
+      <div id="add-tool-settings-panel" class="settings-panel">
         <div class="panel-header">Pengaturan Add Tool</div>
 
         <label class="settings-row">
@@ -550,6 +570,32 @@
         <div class="settings-actions">
           <button id="settings-reset" type="button">Reset ke Default</button>
           <button id="settings-close" type="button">Tutup</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="mirror-settings-modal" class="settings-modal hidden">
+      <div id="mirror-settings-backdrop" class="settings-backdrop mirror-backdrop"></div>
+      <div id="mirror-settings-panel" class="settings-panel">
+        <div class="panel-header">Pengaturan Cermin (Mirror)</div>
+        <p class="settings-hint">Geser pusat cermin (Pivot) ke koordinat tertentu. Kaca cermin akan otomatis bergeser di kanvas.</p>
+        
+        <div class="settings-row" style="margin-top: 16px;">
+          <span>Pivot X / Y / Z</span>
+          <div style="display:flex; gap:4px;">
+            <input type="number" id="settings-mirror-px" step="1" value="0" />
+            <input type="number" id="settings-mirror-py" step="1" value="0" />
+            <input type="number" id="settings-mirror-pz" step="1" value="0" />
+          </div>
+        </div>
+
+        <div class="settings-actions" style="margin-top: 16px;">
+          <button id="btn-mirror-snap-selection" type="button" title="Pindah pusat cermin ke tengah objek yang diseleksi">Pindah ke Selection</button>
+          <button id="btn-mirror-reset" type="button">Reset ke (0,0,0)</button>
+        </div>
+
+        <div class="settings-actions">
+          <button id="settings-mirror-close" type="button">Tutup</button>
         </div>
       </div>
     </div>

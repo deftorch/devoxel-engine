@@ -4,8 +4,8 @@ import { VoxelEngine } from "../core/index.js";
 import { Transform, ColorComp, NodeMeta, NameComp, EditorContext, getSelection, getPrimarySelection } from "./state.js";
 import History from "./history.js";
 import { buildCubeMesh, buildGridLines, interleaveLine, buildOutlineForEid, buildOutlineForTransform, buildGizmoGeometry, buildRotateGizmoGeometry, buildScaleGizmoGeometry, gizmoArmLength, GIZMO_AXES } from "./geometry.js";
-import { AddToolState, spawnInstantCube, buildHoverFaceGrid, setSnapEnabled } from "./tool-add.js";
-import { uploadMesh, rebuildMesh, readTransform, writeTransform, hexToRgb01, rgb01ToHex, addCube, addGroup, deleteSelected, duplicateSelected, renameNode, commitTransform, selectNode, getVirtualPivot } from "./scene-ops.js";
+import { AddToolState, spawnInstantCube, buildHoverFaceGrid, setSnapEnabled, getMirroredTransforms } from "./tool-add.js";
+import { uploadMesh, rebuildMesh, readTransform, writeTransform, hexToRgb01, rgb01ToHex, addCube, addGroup, deleteSelected, duplicateSelected, renameNode, commitTransform, selectNode, getVirtualPivot, symmetrizeSelected } from "./scene-ops.js";
 import { refreshOutliner } from "./ui/outliner.js";
 import { syncPropertyInputs } from "./ui/properties.js";
 import { initAddToolSettingsPanel } from "./ui/add-tool-settings.js";
@@ -131,6 +131,53 @@ $('btn-undo').addEventListener('click', () => History.undo());
 $('btn-redo').addEventListener('click', () => History.redo());
 $('btn-export').addEventListener('click', exportScene);
 
+// Mirror toggle wiring
+function toggleMirror(axis) {
+  EditorContext.mirror[axis] = !EditorContext.mirror[axis];
+  const btn = $(`btn-mirror-${axis}`);
+  if (btn) btn.classList.toggle('active', EditorContext.mirror[axis]);
+}
+$('btn-mirror-x').addEventListener('click', () => toggleMirror('x'));
+$('btn-mirror-y').addEventListener('click', () => toggleMirror('y'));
+$('btn-mirror-z').addEventListener('click', () => toggleMirror('z'));
+$('btn-symmetrize').addEventListener('click', symmetrizeSelected);
+
+// Mirror settings wiring
+$('btn-mirror-settings').addEventListener('click', () => {
+  $('settings-mirror-px').value = EditorContext.mirror.pivotOffset[0];
+  $('settings-mirror-py').value = EditorContext.mirror.pivotOffset[1];
+  $('settings-mirror-pz').value = EditorContext.mirror.pivotOffset[2];
+  $('mirror-settings-modal').classList.remove('hidden');
+});
+$('settings-mirror-close').addEventListener('click', () => $('mirror-settings-modal').classList.add('hidden'));
+document.querySelector('.mirror-backdrop').addEventListener('click', () => $('mirror-settings-modal').classList.add('hidden'));
+
+const updateMirrorPivot = () => {
+  EditorContext.mirror.pivotOffset[0] = parseFloat($('settings-mirror-px').value) || 0;
+  EditorContext.mirror.pivotOffset[1] = parseFloat($('settings-mirror-py').value) || 0;
+  EditorContext.mirror.pivotOffset[2] = parseFloat($('settings-mirror-pz').value) || 0;
+};
+['x','y','z'].forEach(ax => $(`settings-mirror-p${ax}`).addEventListener('input', updateMirrorPivot));
+
+$('btn-mirror-reset').addEventListener('click', () => {
+  $('settings-mirror-px').value = 0;
+  $('settings-mirror-py').value = 0;
+  $('settings-mirror-pz').value = 0;
+  updateMirrorPivot();
+});
+
+$('btn-mirror-snap-selection').addEventListener('click', () => {
+  const pivot = getVirtualPivot();
+  if (pivot) {
+    $('settings-mirror-px').value = pivot[0];
+    $('settings-mirror-py').value = pivot[1];
+    $('settings-mirror-pz').value = pivot[2];
+    updateMirrorPivot();
+  } else {
+    alert("Silakan seleksi minimal 1 objek terlebih dahulu.");
+  }
+});
+
 // activateAddTool sets snap state (which persists) and activates gizmo mode
 function activateAddTool(snap) {
   setSnapEnabled(snap);
@@ -176,6 +223,13 @@ window.addEventListener('keydown', (e) => {
   if ((e.key === 'Delete' || e.key === 'Backspace') && getSelection().length > 0) {
     e.preventDefault();
     deleteSelected();
+  }
+  if (!e.ctrlKey && e.shiftKey) {
+    const key = e.key.toLowerCase();
+    if (key === 'x') { toggleMirror('x'); e.preventDefault(); return; }
+    if (key === 'y') { toggleMirror('y'); e.preventDefault(); return; }
+    if (key === 'z') { toggleMirror('z'); e.preventDefault(); return; }
+    if (key === 'm') { symmetrizeSelected(); e.preventDefault(); return; }
   }
   if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'z') {
     e.preventDefault();
@@ -346,6 +400,46 @@ async function main() {
         }
       }
 
+      // 3. Mirror Planes Visualization (Wireframe Grid)
+      const drawMirrorPlane = (axis, color) => {
+        const p = EditorContext.mirror.pivotOffset;
+        const size = 32;
+        const step = 4; // grid cell size
+        const pos = [];
+        const col = [];
+        
+        const addLine = (p1, p2) => {
+          pos.push(...p1, ...p2);
+          col.push(...color, ...color);
+        };
+
+        if (axis === 'x') {
+          // YZ plane at X = p[0]
+          for (let i = -size; i <= size; i += step) {
+            addLine([p[0], p[1] + i, p[2] - size], [p[0], p[1] + i, p[2] + size]);
+            addLine([p[0], p[1] - size, p[2] + i], [p[0], p[1] + size, p[2] + i]);
+          }
+        } else if (axis === 'y') {
+          // XZ plane at Y = p[1]
+          for (let i = -size; i <= size; i += step) {
+            addLine([p[0] + i, p[1], p[2] - size], [p[0] + i, p[1], p[2] + size]);
+            addLine([p[0] - size, p[1], p[2] + i], [p[0] + size, p[1], p[2] + i]);
+          }
+        } else if (axis === 'z') {
+          // XY plane at Z = p[2]
+          for (let i = -size; i <= size; i += step) {
+            addLine([p[0] + i, p[1] - size, p[2]], [p[0] + i, p[1] + size, p[2]]);
+            addLine([p[0] - size, p[1] + i, p[2]], [p[0] + size, p[1] + i, p[2]]);
+          }
+        }
+        
+        debugData.lines.push({ data: interleaveLine(pos, col), depthTest: true });
+      };
+
+      if (EditorContext.mirror.x) drawMirrorPlane('x', [0.8, 0.2, 0.2]);
+      if (EditorContext.mirror.y) drawMirrorPlane('y', [0.2, 0.8, 0.2]);
+      if (EditorContext.mirror.z) drawMirrorPlane('z', [0.2, 0.2, 0.8]);
+
       if (AddToolState.active && AddToolState.currentPoint) {
         // Blender-style hover overlay: only relevant during HOVER (before a
         // drag defines an actual box), so it doesn't fight visually with
@@ -358,10 +452,13 @@ async function main() {
             if (hoverGrid.tris) debugData.tris.push({ data: hoverGrid.tris, depthTest: true });
           }
         }
-        const t = AddToolState.getCubeTransform();
-        if (t) {
-          const outline = buildOutlineForTransform(t);
-          debugData.lines.push({ data: outline, depthTest: true });
+        const baseT = AddToolState.getCubeTransform();
+        if (baseT) {
+          const transforms = getMirroredTransforms(baseT);
+          for (const t of transforms) {
+            const outline = buildOutlineForTransform(t);
+            debugData.lines.push({ data: outline, depthTest: true });
+          }
         }
       }
 

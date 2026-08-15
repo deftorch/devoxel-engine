@@ -572,30 +572,70 @@ export function buildHoverFaceGrid() {
   return interleaveLine(pos, col);
 }
 
+export function getMirroredTransforms(baseT) {
+  const mirror = EditorContext.mirror;
+  const pivot = mirror.pivotOffset;
+  let transforms = [baseT];
+
+  const applyMirror = (axis, sizeKey, posKey, rotKeys, rotSigns) => {
+    const newTransforms = [];
+    for (const t of transforms) {
+      const mirrored = { ...t };
+      // Mirror position (origin and pivot)
+      const pPlane = pivot[axis === 'x' ? 0 : axis === 'y' ? 1 : 2];
+      mirrored[posKey] = pPlane * 2 - t[posKey] - t[sizeKey];
+      const pivotKey = 'p' + axis;
+      mirrored[pivotKey] = pPlane * 2 - t[pivotKey];
+
+      // Mirror rotations (Euler reflection)
+      mirrored.rx *= rotSigns[0];
+      mirrored.ry *= rotSigns[1];
+      mirrored.rz *= rotSigns[2];
+
+      newTransforms.push(mirrored);
+    }
+    transforms = transforms.concat(newTransforms);
+  };
+
+  if (mirror.x) applyMirror('x', 'sx', 'ox', ['rx', 'ry', 'rz'], [1, -1, -1]);
+  if (mirror.y) applyMirror('y', 'sy', 'oy', ['rx', 'ry', 'rz'], [-1, 1, -1]);
+  if (mirror.z) applyMirror('z', 'sz', 'oz', ['rx', 'ry', 'rz'], [-1, -1, 1]);
+
+  return transforms;
+}
+
 function finalizeCube(t) {
   const primaryEid = getPrimarySelection();
   const parent = primaryEid >= 0 && NodeMeta.isGroup[primaryEid] ? primaryEid : -1;
-  const data = {
+  
+  const transforms = getMirroredTransforms(t);
+  const dataList = transforms.map((tr) => ({
     name: `Cube ${nextNameCube++}`,
     parent,
     isGroup: false,
-    transform: t,
-  };
+    transform: tr,
+    eid: -1 // Will be populated in redo()
+  }));
+  
   paletteIdx++;
   
   History.push({
-    label: 'Add Box (Draw)',
+    label: transforms.length > 1 ? `Add Box (Mirrored x${transforms.length})` : 'Add Box (Draw)',
     redo() {
-      createNodeRaw(data);
-      selectNode(data.eid);
+      for (const data of dataList) {
+        createNodeRaw(data);
+      }
+      selectNode(dataList[dataList.length - 1].eid);
       EditorContext.emit('sceneMutated');
     },
     undo() {
-      if (data.eid >= 0) {
-        destroyNodeRaw(data.eid);
-        selectNode(-1);
-        EditorContext.emit('sceneMutated');
+      for (const data of dataList) {
+        if (data.eid >= 0) {
+          destroyNodeRaw(data.eid);
+        }
       }
+      selectNode(-1);
+      EditorContext.emit('sceneMutated');
     }
   });
 }

@@ -36,6 +36,7 @@ export const EditorContext = {
   engineRef: null,
   sceneOrder: [],
   camera: { target: [0, 3, 0], yaw: 0.9, pitch: -0.5, distance: 26 },
+  mirror: { x: false, y: false, z: false, pivotMode: 'world', pivotOffset: [0, 0, 0] },
   _listeners: {},
   /**
    * Subscribe to an EditorContext event. Multiple listeners per event are
