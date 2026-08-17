@@ -3,7 +3,7 @@ import { world, growableComponent, addGrowable, Renderable, RenderMesh } from ".
 import { VoxelEngine } from "../core/index.js";
 import { Transform, ColorComp, NodeMeta, NameComp, EditorContext, getSelection, getPrimarySelection } from "./state.js";
 import History from "./history.js";
-import { buildCubeMesh, buildGridLines, interleaveLine, buildOutlineForEid, buildOutlineForTransform, buildGizmoGeometry, buildRotateGizmoGeometry, buildScaleGizmoGeometry, gizmoArmLength, GIZMO_AXES } from "./geometry.js";
+import { buildCubeMesh, buildDynamicGrid, interleaveLine, buildOutlineForEid, buildOutlineForTransform, buildGizmoGeometry, buildRotateGizmoGeometry, buildScaleGizmoGeometry, gizmoArmLength, GIZMO_AXES } from "./geometry.js";
 import { AddToolState, spawnInstantCube, buildHoverFaceGrid, setSnapEnabled, getMirroredTransforms } from "./tool-add.js";
 import { uploadMesh, rebuildMesh, readTransform, writeTransform, hexToRgb01, rgb01ToHex, addCube, addGroup, deleteSelected, duplicateSelected, renameNode, commitTransform, selectNode, getVirtualPivot, symmetrizeSelected, getAllDescendants } from "./scene-ops.js";
 import { refreshOutliner } from "./ui/outliner.js";
@@ -324,10 +324,8 @@ async function main() {
   setStatus('Menyiapkan pipeline…', 0.3);
 
   // -----------------------------------------------------------------------
-  // Pipeline variables (grid statis dihitung sekali)
+  // Pipeline variables
   // -----------------------------------------------------------------------
-  const gridLines = buildGridLines(32, 2);
-  const gridVertexData = interleaveLine(gridLines.positions, gridLines.colors);
 
   addCube();
   overlay.classList.add('hidden');
@@ -365,7 +363,8 @@ async function main() {
       // Siapkan data debug primitif
       const debugData = { lines: [], tris: [] };
       
-      // 1. Grid
+      // 1. Dynamic Grid
+      const gridVertexData = buildDynamicGrid(EditorContext.camera.target, EditorContext.camera.distance);
       debugData.lines.push({ data: gridVertexData, depthTest: true });
 
       // 2. Gizmo & Outline (jika ada seleksi)

@@ -74,23 +74,90 @@ export function buildCubeMesh(t) {
   };
 }
 
-export function buildGridLines(size = 32, step = 2) {
-  const positions = [],
-    colors = [];
-  const half = size / 2;
-  const dim = [0.3, 0.34, 0.42];
-  const axisX = [0.85, 0.35, 0.35];
-  const axisZ = [0.35, 0.55, 0.9];
-  for (let i = -half; i <= half; i += step) {
-    const onAxis = Math.abs(i) < 1e-6;
-    const cx = onAxis ? axisZ : dim; 
-    positions.push(i, 0, -half, i, 0, half);
-    colors.push(...cx, ...cx);
-    const cz = onAxis ? axisX : dim;
-    positions.push(-half, 0, i, half, 0, i);
-    colors.push(...cz, ...cz);
+export function buildDynamicGrid(target, distance) {
+  const positions = [], colors = [];
+  
+  const logDist = Math.log10(Math.max(1, distance / 8));
+  const order = Math.floor(logDist);
+  const blend = logDist - order; 
+  
+  const stepMajor = Math.pow(10, order + 1);
+  const stepMinor = Math.pow(10, order);
+  
+  const cx = Math.floor(target[0] / stepMinor) * stepMinor;
+  const cz = Math.floor(target[2] / stepMinor) * stepMinor;
+  
+  const gridSize = Math.max(40, distance * 5);
+  const half = gridSize / 2;
+  
+  const bg = [0.53, 0.72, 0.86]; 
+  const mixCol = (col, a) => [
+    col[0] * a + bg[0] * (1 - a),
+    col[1] * a + bg[1] * (1 - a),
+    col[2] * a + bg[2] * (1 - a)
+  ];
+
+  // Colors
+  const baseDim = [0.35, 0.45, 0.55]; // Lighter so it's not too harsh
+  const baseMajor = [0.2, 0.3, 0.45];
+  const axisX = [0.85, 0.25, 0.25];
+  const axisZ = [0.25, 0.45, 0.85];
+  
+  const start = -Math.ceil(half / stepMinor) * stepMinor;
+  const end = Math.ceil(half / stepMinor) * stepMinor;
+
+  const pushLine = (x1, z1, x2, z2, c1, c2) => {
+    positions.push(x1, 0, z1, x2, 0, z2);
+    colors.push(...c1, ...c2);
+  };
+
+  const getFade = (dx, dz) => {
+    const dist = Math.hypot(dx, dz) / half;
+    return Math.max(0, 1.0 - dist * dist * dist); // Cubic falloff for smoother core
+  };
+
+  for (let i = start; i <= end; i += stepMinor) {
+    const nx = cx + i;
+    const nz = cz + i;
+    
+    // --- X lines (parallel to Z) ---
+    const isMajorX = Math.abs(nx % stepMajor) < 1e-4;
+    const isAxisZ = Math.abs(nx) < 1e-4;
+    // Fade minor lines out as we zoom out (blend -> 1)
+    const lineAlphaX = isMajorX ? 1.0 : Math.max(0, 1.0 - blend * 1.5); 
+    const colX = isAxisZ ? axisZ : isMajorX ? baseMajor : baseDim;
+    
+    // Split line at Z = cz to ensure center has max alpha
+    const fadeX_start = getFade(nx - cx, start);
+    const fadeX_mid = getFade(nx - cx, 0);
+    const fadeX_end = getFade(nx - cx, end);
+    
+    const cX_start = mixCol(colX, lineAlphaX * fadeX_start);
+    const cX_mid = mixCol(colX, lineAlphaX * fadeX_mid);
+    const cX_end = mixCol(colX, lineAlphaX * fadeX_end);
+    
+    pushLine(nx, cz + start, nx, cz, cX_start, cX_mid);
+    pushLine(nx, cz, nx, cz + end, cX_mid, cX_end);
+
+    // --- Z lines (parallel to X) ---
+    const isMajorZ = Math.abs(nz % stepMajor) < 1e-4;
+    const isAxisX = Math.abs(nz) < 1e-4;
+    const lineAlphaZ = isMajorZ ? 1.0 : Math.max(0, 1.0 - blend * 1.5);
+    const colZ = isAxisX ? axisX : isMajorZ ? baseMajor : baseDim;
+    
+    // Split line at X = cx
+    const fadeZ_start = getFade(start, nz - cz);
+    const fadeZ_mid = getFade(0, nz - cz);
+    const fadeZ_end = getFade(end, nz - cz);
+    
+    const cZ_start = mixCol(colZ, lineAlphaZ * fadeZ_start);
+    const cZ_mid = mixCol(colZ, lineAlphaZ * fadeZ_mid);
+    const cZ_end = mixCol(colZ, lineAlphaZ * fadeZ_end);
+    
+    pushLine(cx + start, nz, cx, nz, cZ_start, cZ_mid);
+    pushLine(cx, nz, cx + end, nz, cZ_mid, cZ_end);
   }
-  return { positions, colors };
+  return interleaveLine(positions, colors);
 }
 
 export function interleaveLine(positions, colors) {
