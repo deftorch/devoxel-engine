@@ -1,5 +1,6 @@
 import { ColorComp, NodeMeta, NameComp, EditorContext, getSelection, setSelection } from "../state.js";
-import { renameNode, selectNode, rgb01ToHex, reparentNodes, syncSelectionUI } from "../scene-ops.js";
+import { renameNode, selectNode, rgb01ToHex, reparentNodes, syncSelectionUI, duplicateSelected, deleteSelected, addGroup } from "../scene-ops.js";
+import { createPrefabFromSelection } from "./prefabs.js";
 
 const collapsedGroups = new Set();
 let lastSelectedEid = -1;
@@ -78,6 +79,27 @@ export function refreshOutliner() {
           selectNode(eid, ctrlKey);
           lastSelectedEid = eid;
         }
+      });
+      
+      row.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        
+        if (!Array.from(getSelection()).includes(eid)) {
+          selectNode(eid, false);
+          lastSelectedEid = eid;
+        }
+
+        const ctxMenu = document.getElementById('context-menu');
+        ctxMenu.style.display = 'block';
+        
+        let x = e.clientX;
+        let y = e.clientY;
+        if (x + 150 > window.innerWidth) x -= 150;
+        if (y + 120 > window.innerHeight) y -= 120;
+        
+        ctxMenu.style.left = x + 'px';
+        ctxMenu.style.top = y + 'px';
+        ctxMenu.dataset.targetEid = eid;
       });
       
       const toggleEl = row.querySelector('.group-toggle');
@@ -163,6 +185,37 @@ export function refreshOutlinerSelection() {
   const selection = Array.from(getSelection());
   outlinerList.querySelectorAll('.node-row').forEach((row) => {
     row.classList.toggle('selected', selection.includes(Number(row.dataset.eid)));
+  });
+}
+
+// Global context menu hide listener
+window.addEventListener('click', (e) => {
+  const ctxMenu = document.getElementById('context-menu');
+  if (ctxMenu && ctxMenu.style.display === 'block') {
+    ctxMenu.style.display = 'none';
+  }
+});
+
+// Init context menu actions once
+export function initContextMenu() {
+  const ctxMenu = document.getElementById('context-menu');
+  if (!ctxMenu) return;
+
+  document.getElementById('ctx-create-prefab').addEventListener('click', () => {
+    const eid = parseInt(ctxMenu.dataset.targetEid, 10);
+    if (!isNaN(eid)) createPrefabFromSelection(eid);
+  });
+
+  document.getElementById('ctx-group').addEventListener('click', () => {
+    addGroup(); // operates on current selection
+  });
+
+  document.getElementById('ctx-duplicate').addEventListener('click', () => {
+    duplicateSelected();
+  });
+
+  document.getElementById('ctx-delete').addEventListener('click', () => {
+    deleteSelected();
   });
 }
 

@@ -125,8 +125,15 @@
       }
       #viewport-wrap {
         flex: 1;
+        display: flex;
+        flex-direction: column;
         position: relative;
         min-width: 0;
+      }
+      #viewport-main {
+        flex: 1;
+        position: relative;
+        min-height: 0;
       }
       canvas {
         display: block;
@@ -136,6 +143,67 @@
       }
       canvas.dragging {
         cursor: grabbing;
+      }
+      #asset-browser {
+        height: 160px;
+        background: #0d1219;
+        border-top: 1px solid rgba(120, 170, 255, 0.15);
+        display: flex;
+        flex-direction: column;
+      }
+      #prefab-list {
+        flex: 1;
+        display: flex;
+        gap: 12px;
+        padding: 12px;
+        overflow-x: auto;
+      }
+      .prefab-card {
+        width: 84px;
+        height: 84px;
+        background: #141b26;
+        border: 1px solid rgba(120, 170, 255, 0.2);
+        border-radius: 6px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: 0.1s;
+        position: relative;
+      }
+      .prefab-card:hover {
+        background: #1c2635;
+        border-color: rgba(120, 170, 255, 0.45);
+      }
+      .prefab-card .icon { font-size: 28px; color: #7fd4ff; }
+      .prefab-card .name { font-size: 11px; text-align: center; margin-top: 8px; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 4px; }
+      .prefab-card .del-btn {
+        position: absolute; top: -6px; right: -6px; background: #ff4d4d; color: white; border: none; border-radius: 50%; width: 18px; height: 18px; font-size: 10px; cursor: pointer; display: none;
+      }
+      .prefab-card:hover .del-btn { display: block; }
+      
+      /* Context Menu */
+      #context-menu {
+        display: none;
+        position: fixed;
+        background: #141b26;
+        border: 1px solid rgba(120, 170, 255, 0.2);
+        border-radius: 6px;
+        padding: 4px 0;
+        z-index: 100;
+        min-width: 150px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      }
+      .ctx-item {
+        padding: 6px 12px;
+        font-size: 12px;
+        cursor: pointer;
+        color: #cfe8ff;
+      }
+      .ctx-item:hover {
+        background: #2a5a8f;
+        color: white;
       }
       #marquee-box {
         display: none;
@@ -522,17 +590,23 @@
         </div>
 
         <div id="viewport-wrap">
-          <canvas id="gpu-canvas"></canvas>
-          <div id="marquee-box"></div>
-          <div id="add-tool-hud"></div>
-          <div id="statusbar">
-            <span><b>FPS</b> <span id="stat-fps">0</span></span>
-            <span><b>Elemen</b> <span id="stat-count">0</span></span>
-            <span><b>Terpilih</b> <span id="stat-selected">—</span></span>
+          <div id="viewport-main">
+            <canvas id="gpu-canvas"></canvas>
+            <div id="marquee-box"></div>
+            <div id="add-tool-hud"></div>
+            <div id="statusbar">
+              <span><b>FPS</b> <span id="stat-fps">0</span></span>
+              <span><b>Elemen</b> <span id="stat-count">0</span></span>
+              <span><b>Terpilih</b> <span id="stat-selected">—</span></span>
+            </div>
+            <div id="overlay">
+              <div id="status">Menginisialisasi WebGPU…</div>
+              <div class="bar"><div class="fill" id="fill"></div></div>
+            </div>
           </div>
-          <div id="overlay">
-            <div id="status">Menginisialisasi WebGPU…</div>
-            <div class="bar"><div class="fill" id="fill"></div></div>
+          <div id="asset-browser">
+            <div class="panel-header" style="border-bottom: 1px solid rgba(120, 170, 255, 0.15); padding-bottom: 6px;">Asset Browser (Prefabs)</div>
+            <div id="prefab-list"></div>
           </div>
         </div>
 
@@ -598,6 +672,14 @@
           <button id="settings-mirror-close" type="button">Tutup</button>
         </div>
       </div>
+    </div>
+
+    <!-- Context Menu -->
+    <div id="context-menu">
+      <div class="ctx-item" id="ctx-create-prefab">Save as Prefab</div>
+      <div class="ctx-item" id="ctx-group">Create Group</div>
+      <div class="ctx-item" id="ctx-duplicate">⧉ Duplicate</div>
+      <div class="ctx-item" id="ctx-delete" style="color:#ff8080">✕ Delete</div>
     </div>
 
     <script type="module" src="src/editor/editor.js?v=2"></script>

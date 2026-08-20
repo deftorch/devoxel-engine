@@ -6,7 +6,8 @@ import History from "./history.js";
 import { buildCubeMesh, buildDynamicGrid, interleaveLine, buildOutlineForEid, buildOutlineForTransform, buildGizmoGeometry, buildRotateGizmoGeometry, buildScaleGizmoGeometry, gizmoArmLength, GIZMO_AXES } from "./geometry.js";
 import { AddToolState, spawnInstantCube, buildHoverFaceGrid, setSnapEnabled, getMirroredTransforms } from "./tool-add.js";
 import { uploadMesh, rebuildMesh, readTransform, writeTransform, hexToRgb01, rgb01ToHex, addCube, addGroup, deleteSelected, duplicateSelected, renameNode, commitTransform, selectNode, getVirtualPivot, symmetrizeSelected, getAllDescendants } from "./scene-ops.js";
-import { refreshOutliner } from "./ui/outliner.js";
+import { refreshOutliner, initContextMenu } from "./ui/outliner.js";
+import { renderAssetBrowser } from "./ui/prefabs.js";
 import { syncPropertyInputs } from "./ui/properties.js";
 import { initAddToolSettingsPanel } from "./ui/add-tool-settings.js";
 import { cameraBasis, getFovY, initCameraInput, getGizmoMode, setGizmoMode, modalTransform, startModalTransform, handleModalConstraint, endModalTransform, hoveredGizmoAxis } from "./camera-input.js";
@@ -330,6 +331,8 @@ async function main() {
   addCube();
   overlay.classList.add('hidden');
   refreshOutliner();
+  initContextMenu();
+  renderAssetBrowser();
 
   let lastTime = performance.now();
   let fpsAcc = 0, fpsFrames = 0, fpsDisplay = 0;
