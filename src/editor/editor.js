@@ -417,7 +417,7 @@ async function main() {
       const debugData = { lines: [], tris: [] };
       
       // 1. Dynamic Grid
-      const gridVertexData = buildDynamicGrid(EditorContext.camera.target, EditorContext.camera.distance);
+      const gridVertexData = buildDynamicGrid(EditorContext.camera.target, EditorContext.camera.distance, EditorContext.camera.yaw, EditorContext.camera.pitch);
       debugData.lines.push({ data: gridVertexData, depthTest: true });
 
       // 2. Gizmo & Outline (jika ada seleksi)

@@ -74,9 +74,24 @@ export function buildCubeMesh(t) {
   };
 }
 
-export function buildDynamicGrid(target, distance) {
-  const positions = [], colors = [];
+export function buildDynamicGrid(target, distance, yaw = 0, pitch = Math.PI/4) {
+  // Determine plane based on camera orientation
+  let plane = 'XZ'; // default (Top/Bottom or diagonal)
   
+  const pYaw = ((yaw % (Math.PI*2)) + Math.PI*2) % (Math.PI*2); 
+  const eps = 0.05;
+  const isZero = v => Math.abs(v) < eps || Math.abs(v - Math.PI*2) < eps;
+  const isHalfPi = v => Math.abs(v - Math.PI/2) < eps || Math.abs(v - Math.PI*1.5) < eps;
+  const isPi = v => Math.abs(v - Math.PI) < eps;
+  
+  if (Math.abs(pitch) < eps) {
+    if (isZero(pYaw) || isPi(pYaw)) plane = 'XY';
+    else if (isHalfPi(pYaw)) plane = 'YZ';
+  } else if (Math.abs(Math.abs(pitch) - Math.PI/2) < eps) {
+    plane = 'XZ';
+  }
+
+  const positions = [], colors = [];
   const logDist = Math.log10(Math.max(1, distance / 8));
   const order = Math.floor(logDist);
   const blend = logDist - order; 
@@ -84,8 +99,8 @@ export function buildDynamicGrid(target, distance) {
   const stepMajor = Math.pow(10, order + 1);
   const stepMinor = Math.pow(10, order);
   
-  const cx = Math.floor(target[0] / stepMinor) * stepMinor;
-  const cz = Math.floor(target[2] / stepMinor) * stepMinor;
+  const cgx = Math.floor(target[plane === 'YZ' ? 2 : 0] / stepMinor) * stepMinor; 
+  const cgy = Math.floor(target[plane === 'XZ' ? 2 : 1] / stepMinor) * stepMinor; 
   
   const gridSize = Math.max(40, distance * 5);
   const half = gridSize / 2;
@@ -97,65 +112,85 @@ export function buildDynamicGrid(target, distance) {
     col[2] * a + bg[2] * (1 - a)
   ];
 
-  // Colors
-  const baseDim = [0.35, 0.45, 0.55]; // Lighter so it's not too harsh
+  const baseDim = [0.35, 0.45, 0.55]; 
   const baseMajor = [0.2, 0.3, 0.45];
-  const axisX = [0.85, 0.25, 0.25];
-  const axisZ = [0.25, 0.45, 0.85];
+  const axisColorX = [0.85, 0.25, 0.25];
+  const axisColorY = [0.25, 0.85, 0.25];
+  const axisColorZ = [0.25, 0.45, 0.85];
+
+  let cAxisGx, cAxisGy;
+  if (plane === 'XZ') { cAxisGx = axisColorZ; cAxisGy = axisColorX; }
+  else if (plane === 'XY') { cAxisGx = axisColorY; cAxisGy = axisColorX; }
+  else { /* YZ */ cAxisGx = axisColorY; cAxisGy = axisColorZ; }
   
   const start = -Math.ceil(half / stepMinor) * stepMinor;
   const end = Math.ceil(half / stepMinor) * stepMinor;
 
-  const pushLine = (x1, z1, x2, z2, c1, c2) => {
-    positions.push(x1, 0, z1, x2, 0, z2);
+  const pushLine = (gx1, gy1, gx2, gy2, c1, c2) => {
+    if (plane === 'XY') positions.push(gx1, gy1, 0, gx2, gy2, 0);
+    else if (plane === 'YZ') positions.push(0, gy1, gx1, 0, gy2, gx2);
+    else positions.push(gx1, 0, gy1, gx2, 0, gy2);
     colors.push(...c1, ...c2);
   };
 
-  const getFade = (dx, dz) => {
-    const dist = Math.hypot(dx, dz) / half;
-    return Math.max(0, 1.0 - dist * dist * dist); // Cubic falloff for smoother core
+  const getFade = (dx, dy) => {
+    const dist = Math.hypot(dx, dy) / half;
+    return Math.max(0, 1.0 - dist * dist * dist); 
   };
+  
+  const off = Math.max(0.01, distance * 0.002); // Thickness offset based on camera distance
 
   for (let i = start; i <= end; i += stepMinor) {
-    const nx = cx + i;
-    const nz = cz + i;
+    const ngx = cgx + i;
+    const ngy = cgy + i;
     
-    // --- X lines (parallel to Z) ---
-    const isMajorX = Math.abs(nx % stepMajor) < 1e-4;
-    const isAxisZ = Math.abs(nx) < 1e-4;
-    // Fade minor lines out as we zoom out (blend -> 1)
-    const lineAlphaX = isMajorX ? 1.0 : Math.max(0, 1.0 - blend * 1.5); 
-    const colX = isAxisZ ? axisZ : isMajorX ? baseMajor : baseDim;
+    // --- Grid X lines (parallel to Gy) ---
+    const isMajorGx = Math.abs(ngx % stepMajor) < 1e-4;
+    const isAxisGy = Math.abs(ngx) < 1e-4; 
+    const lineAlphaGx = isMajorGx ? 1.0 : Math.max(0, 1.0 - blend * 1.5); 
+    const colGx = isAxisGy ? cAxisGx : isMajorGx ? baseMajor : baseDim;
     
-    // Split line at Z = cz to ensure center has max alpha
-    const fadeX_start = getFade(nx - cx, start);
-    const fadeX_mid = getFade(nx - cx, 0);
-    const fadeX_end = getFade(nx - cx, end);
+    const fadeGx_start = getFade(ngx - cgx, start);
+    const fadeGx_mid = getFade(ngx - cgx, 0);
+    const fadeGx_end = getFade(ngx - cgx, end);
     
-    const cX_start = mixCol(colX, lineAlphaX * fadeX_start);
-    const cX_mid = mixCol(colX, lineAlphaX * fadeX_mid);
-    const cX_end = mixCol(colX, lineAlphaX * fadeX_end);
+    const cgx_c1 = mixCol(colGx, lineAlphaGx * fadeGx_start);
+    const cgx_c2 = mixCol(colGx, lineAlphaGx * fadeGx_mid);
+    const cgx_c3 = mixCol(colGx, lineAlphaGx * fadeGx_end);
     
-    pushLine(nx, cz + start, nx, cz, cX_start, cX_mid);
-    pushLine(nx, cz, nx, cz + end, cX_mid, cX_end);
+    pushLine(ngx, cgy + start, ngx, cgy, cgx_c1, cgx_c2);
+    pushLine(ngx, cgy, ngx, cgy + end, cgx_c2, cgx_c3);
+    
+    if (isAxisGy) {
+      pushLine(ngx - off, cgy + start, ngx - off, cgy, cgx_c1, cgx_c2);
+      pushLine(ngx - off, cgy, ngx - off, cgy + end, cgx_c2, cgx_c3);
+      pushLine(ngx + off, cgy + start, ngx + off, cgy, cgx_c1, cgx_c2);
+      pushLine(ngx + off, cgy, ngx + off, cgy + end, cgx_c2, cgx_c3);
+    }
 
-    // --- Z lines (parallel to X) ---
-    const isMajorZ = Math.abs(nz % stepMajor) < 1e-4;
-    const isAxisX = Math.abs(nz) < 1e-4;
-    const lineAlphaZ = isMajorZ ? 1.0 : Math.max(0, 1.0 - blend * 1.5);
-    const colZ = isAxisX ? axisX : isMajorZ ? baseMajor : baseDim;
+    // --- Grid Y lines (parallel to Gx) ---
+    const isMajorGy = Math.abs(ngy % stepMajor) < 1e-4;
+    const isAxisGx = Math.abs(ngy) < 1e-4;
+    const lineAlphaGy = isMajorGy ? 1.0 : Math.max(0, 1.0 - blend * 1.5);
+    const colGy = isAxisGx ? cAxisGy : isMajorGy ? baseMajor : baseDim;
     
-    // Split line at X = cx
-    const fadeZ_start = getFade(start, nz - cz);
-    const fadeZ_mid = getFade(0, nz - cz);
-    const fadeZ_end = getFade(end, nz - cz);
+    const fadeGy_start = getFade(start, ngy - cgy);
+    const fadeGy_mid = getFade(0, ngy - cgy);
+    const fadeGy_end = getFade(end, ngy - cgy);
     
-    const cZ_start = mixCol(colZ, lineAlphaZ * fadeZ_start);
-    const cZ_mid = mixCol(colZ, lineAlphaZ * fadeZ_mid);
-    const cZ_end = mixCol(colZ, lineAlphaZ * fadeZ_end);
+    const cgy_c1 = mixCol(colGy, lineAlphaGy * fadeGy_start);
+    const cgy_c2 = mixCol(colGy, lineAlphaGy * fadeGy_mid);
+    const cgy_c3 = mixCol(colGy, lineAlphaGy * fadeGy_end);
     
-    pushLine(cx + start, nz, cx, nz, cZ_start, cZ_mid);
-    pushLine(cx, nz, cx + end, nz, cZ_mid, cZ_end);
+    pushLine(cgx + start, ngy, cgx, ngy, cgy_c1, cgy_c2);
+    pushLine(cgx, ngy, cgx + end, ngy, cgy_c2, cgy_c3);
+    
+    if (isAxisGx) {
+      pushLine(cgx + start, ngy - off, cgx, ngy - off, cgy_c1, cgy_c2);
+      pushLine(cgx, ngy - off, cgx + end, ngy - off, cgy_c2, cgy_c3);
+      pushLine(cgx + start, ngy + off, cgx, ngy + off, cgy_c1, cgy_c2);
+      pushLine(cgx, ngy + off, cgx + end, ngy + off, cgy_c2, cgy_c3);
+    }
   }
   return interleaveLine(positions, colors);
 }
