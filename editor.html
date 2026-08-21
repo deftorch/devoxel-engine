@@ -144,6 +144,136 @@
       canvas.dragging {
         cursor: grabbing;
       }
+
+      /* ---------- View Cube Gizmo ---------- */
+      #view-cube-wrap {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        width: 80px;
+        height: 80px;
+        perspective: 400px;
+        z-index: 10;
+        pointer-events: none;
+      }
+      #view-cube {
+        width: 100%;
+        height: 100%;
+        position: relative;
+        transform-style: preserve-3d;
+        pointer-events: auto;
+      }
+      .cube-face {
+        position: absolute;
+        width: 60px;
+        height: 60px;
+        left: 10px;
+        top: 10px;
+        background: rgba(20, 27, 38, 0.85);
+        border: 2px solid rgba(127, 212, 255, 0.4);
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        font-weight: bold;
+        color: rgba(127, 212, 255, 0.8);
+        cursor: pointer;
+        user-select: none;
+        transition: 0.1s;
+      }
+      .cube-face:hover {
+        background: rgba(127, 212, 255, 0.8);
+        color: #000;
+        border-color: #fff;
+      }
+      .cube-front  { transform: rotateY(  0deg) translateZ(30px); }
+      .cube-back   { transform: rotateY(180deg) translateZ(30px); }
+      .cube-right  { transform: rotateY( 90deg) translateZ(30px); }
+      .cube-left   { transform: rotateY(-90deg) translateZ(30px); }
+      .cube-top    { transform: rotateX( 90deg) translateZ(30px); }
+      .cube-bottom { transform: rotateX(-90deg) translateZ(30px); }
+
+      /* Axes lines */
+      .cube-axis {
+        position: absolute;
+        pointer-events: none;
+      }
+      .axis-x { width: 100px; height: 2px; background: linear-gradient(to right, rgba(255,77,77,0.2), #ff4d4d 50%, rgba(255,77,77,0.2)); left: -10px; top: 39px; transform: translateZ(0); }
+      .axis-y { width: 2px; height: 100px; background: linear-gradient(to bottom, rgba(77,255,77,0.2), #4dff4d 50%, rgba(77,255,77,0.2)); left: 39px; top: -10px; transform: translateZ(0); }
+      .axis-z { width: 2px; height: 100px; background: linear-gradient(to bottom, rgba(77,77,255,0.2), #4d4dff 50%, rgba(77,77,255,0.2)); left: 39px; top: -10px; transform: rotateX(90deg); }
+
+      /* Axis Handles (Functional Spheres) */
+      .axis-handle {
+        position: absolute;
+        width: 16px;
+        height: 16px;
+        left: 32px; top: 32px;
+        cursor: pointer;
+        /* Positioning only */
+      }
+      .axis-handle::before {
+        content: '';
+        display: block;
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        transition: transform 0.1s;
+      }
+      .axis-handle:hover::before { transform: scale(1.3); }
+
+      .axis-pos-x { transform: translate3d( 46px, 0, 0) rotateY(var(--yaw)) rotateX(var(--inv-pitch)); }
+      .axis-pos-x::before { background: radial-gradient(circle at 35% 35%, #ffcccc, #ff4d4d 40%, #990000 100%); }
+      
+      .axis-neg-x { transform: translate3d(-46px, 0, 0) rotateY(var(--yaw)) rotateX(var(--inv-pitch)); width: 12px; height: 12px; left: 34px; top: 34px; }
+      .axis-neg-x::before { background: radial-gradient(circle at 35% 35%, #ffffff, #cccccc 40%, #666666 100%); }
+      
+      .axis-pos-y { transform: translate3d(0, -46px, 0) rotateY(var(--yaw)) rotateX(var(--inv-pitch)); }
+      .axis-pos-y::before { background: radial-gradient(circle at 35% 35%, #ccffcc, #4dff4d 40%, #009900 100%); }
+      
+      .axis-neg-y { transform: translate3d(0,  46px, 0) rotateY(var(--yaw)) rotateX(var(--inv-pitch)); width: 12px; height: 12px; left: 34px; top: 34px; }
+      .axis-neg-y::before { background: radial-gradient(circle at 35% 35%, #ffffff, #cccccc 40%, #666666 100%); }
+      
+      .axis-pos-z { transform: translate3d(0, 0,  46px) rotateY(var(--yaw)) rotateX(var(--inv-pitch)); }
+      .axis-pos-z::before { background: radial-gradient(circle at 35% 35%, #ccccff, #4d4dff 40%, #000099 100%); }
+      
+      .axis-neg-z { transform: translate3d(0, 0, -46px) rotateY(var(--yaw)) rotateX(var(--inv-pitch)); width: 12px; height: 12px; left: 34px; top: 34px; }
+      .axis-neg-z::before { background: radial-gradient(circle at 35% 35%, #ffffff, #cccccc 40%, #666666 100%); }
+
+      /* Corners (Spheres) */
+      .cube-corner {
+        position: absolute;
+        width: 16px;
+        height: 16px;
+        left: 32px; top: 32px;
+        cursor: pointer;
+      }
+      .cube-corner::before {
+        content: '';
+        display: block;
+        width: 100%;
+        height: 100%;
+        background: radial-gradient(circle at 35% 35%, #ffffff, #7fd4ff 40%, #004d80 100%);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+        border-radius: 50%;
+        transition: transform 0.1s, background 0.1s;
+      }
+      .cube-corner:hover::before { 
+        background: radial-gradient(circle at 35% 35%, #ffffff, #b3e6ff 40%, #0073e6 100%);
+        transform: scale(1.3);
+      }
+      
+      /* Combine translate + inverse rotation for billboarding */
+      .corner-trf { transform: translate3d( 32px, -32px,  32px) rotateY(var(--yaw)) rotateX(var(--inv-pitch)); }
+      .corner-tlf { transform: translate3d(-32px, -32px,  32px) rotateY(var(--yaw)) rotateX(var(--inv-pitch)); }
+      .corner-brf { transform: translate3d( 32px,  32px,  32px) rotateY(var(--yaw)) rotateX(var(--inv-pitch)); }
+      .corner-blf { transform: translate3d(-32px,  32px,  32px) rotateY(var(--yaw)) rotateX(var(--inv-pitch)); }
+      .corner-trb { transform: translate3d( 32px, -32px, -32px) rotateY(var(--yaw)) rotateX(var(--inv-pitch)); }
+      .corner-tlb { transform: translate3d(-32px, -32px, -32px) rotateY(var(--yaw)) rotateX(var(--inv-pitch)); }
+      .corner-brb { transform: translate3d( 32px,  32px, -32px) rotateY(var(--yaw)) rotateX(var(--inv-pitch)); }
+      .corner-blb { transform: translate3d(-32px,  32px, -32px) rotateY(var(--yaw)) rotateX(var(--inv-pitch)); }
+
       #asset-browser {
         height: 160px;
         background: #0d1219;
@@ -592,6 +722,42 @@
         <div id="viewport-wrap">
           <div id="viewport-main">
             <canvas id="gpu-canvas"></canvas>
+
+            <div id="view-cube-wrap">
+              <div id="view-cube">
+                <!-- Axes -->
+                <div class="cube-axis axis-x"></div>
+                <div class="cube-axis axis-y"></div>
+                <div class="cube-axis axis-z"></div>
+
+                <!-- Axis Handles -->
+                <div class="axis-handle axis-pos-x" data-view="right" title="Kanan (X)"></div>
+                <div class="axis-handle axis-neg-x" data-view="left" title="Kiri (-X)"></div>
+                <div class="axis-handle axis-pos-y" data-view="top" title="Atas (Y)"></div>
+                <div class="axis-handle axis-neg-y" data-view="bottom" title="Bawah (-Y)"></div>
+                <div class="axis-handle axis-pos-z" data-view="front" title="Depan (Z)"></div>
+                <div class="axis-handle axis-neg-z" data-view="back" title="Belakang (-Z)"></div>
+                
+                <!-- Faces -->
+                <div class="cube-face cube-front" data-view="front">Z</div>
+                <div class="cube-face cube-back" data-view="back">-Z</div>
+                <div class="cube-face cube-right" data-view="right">X</div>
+                <div class="cube-face cube-left" data-view="left">-X</div>
+                <div class="cube-face cube-top" data-view="top">Y</div>
+                <div class="cube-face cube-bottom" data-view="bottom">-Y</div>
+                
+                <!-- Corners -->
+                <div class="cube-corner corner-trf" data-view="trf"></div>
+                <div class="cube-corner corner-tlf" data-view="tlf"></div>
+                <div class="cube-corner corner-brf" data-view="brf"></div>
+                <div class="cube-corner corner-blf" data-view="blf"></div>
+                <div class="cube-corner corner-trb" data-view="trb"></div>
+                <div class="cube-corner corner-tlb" data-view="tlb"></div>
+                <div class="cube-corner corner-brb" data-view="brb"></div>
+                <div class="cube-corner corner-blb" data-view="blb"></div>
+              </div>
+            </div>
+
             <div id="marquee-box"></div>
             <div id="add-tool-hud"></div>
             <div id="statusbar">

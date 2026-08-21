@@ -334,6 +334,56 @@ async function main() {
   initContextMenu();
   renderAssetBrowser();
 
+  // View Cube Interactions
+  let isCubeDragging = false;
+  let cubeDragMoved = false;
+  let cubeDragLastPos = [0, 0];
+
+  const viewCube = document.getElementById('view-cube');
+  if (viewCube) {
+    viewCube.addEventListener('mousedown', (e) => {
+      isCubeDragging = true;
+      cubeDragMoved = false;
+      cubeDragLastPos = [e.clientX, e.clientY];
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!isCubeDragging) return;
+      const dx = e.clientX - cubeDragLastPos[0];
+      const dy = e.clientY - cubeDragLastPos[1];
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) cubeDragMoved = true;
+      EditorContext.camera.yaw -= dx * 0.006;
+      EditorContext.camera.pitch = Math.max(-1.5, Math.min(1.5, EditorContext.camera.pitch - dy * 0.006));
+      cubeDragLastPos = [e.clientX, e.clientY];
+    });
+    window.addEventListener('mouseup', () => {
+      // Small timeout so click event has time to evaluate cubeDragMoved before it's reset
+      setTimeout(() => { isCubeDragging = false; cubeDragMoved = false; }, 0);
+    });
+  }
+
+  document.querySelectorAll('.cube-face, .cube-corner, .axis-handle').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (cubeDragMoved) return;
+      const view = e.target.dataset.view;
+      // Faces
+      if (view === 'front') { EditorContext.camera.yaw = 0; EditorContext.camera.pitch = 0; }
+      else if (view === 'back') { EditorContext.camera.yaw = Math.PI; EditorContext.camera.pitch = 0; }
+      else if (view === 'right') { EditorContext.camera.yaw = -Math.PI / 2; EditorContext.camera.pitch = 0; }
+      else if (view === 'left') { EditorContext.camera.yaw = Math.PI / 2; EditorContext.camera.pitch = 0; }
+      else if (view === 'top') { EditorContext.camera.yaw = 0; EditorContext.camera.pitch = Math.PI / 2; }
+      else if (view === 'bottom') { EditorContext.camera.yaw = 0; EditorContext.camera.pitch = -Math.PI / 2; }
+      // Corners
+      else if (view === 'trf') { EditorContext.camera.yaw = -Math.PI / 4; EditorContext.camera.pitch = Math.PI / 4; }
+      else if (view === 'tlf') { EditorContext.camera.yaw = Math.PI / 4; EditorContext.camera.pitch = Math.PI / 4; }
+      else if (view === 'brf') { EditorContext.camera.yaw = -Math.PI / 4; EditorContext.camera.pitch = -Math.PI / 4; }
+      else if (view === 'blf') { EditorContext.camera.yaw = Math.PI / 4; EditorContext.camera.pitch = -Math.PI / 4; }
+      else if (view === 'trb') { EditorContext.camera.yaw = -3 * Math.PI / 4; EditorContext.camera.pitch = Math.PI / 4; }
+      else if (view === 'tlb') { EditorContext.camera.yaw = 3 * Math.PI / 4; EditorContext.camera.pitch = Math.PI / 4; }
+      else if (view === 'brb') { EditorContext.camera.yaw = -3 * Math.PI / 4; EditorContext.camera.pitch = -Math.PI / 4; }
+      else if (view === 'blb') { EditorContext.camera.yaw = 3 * Math.PI / 4; EditorContext.camera.pitch = -Math.PI / 4; }
+    });
+  });
+
   let lastTime = performance.now();
   let fpsAcc = 0, fpsFrames = 0, fpsDisplay = 0;
 
@@ -469,6 +519,15 @@ async function main() {
         EditorContext.engineRef.rendererPlugin.drawDebugPrimitives(cameraState, debugData);
       }
       
+      // Update View Cube
+      const viewCubeWrap = document.getElementById('view-cube-wrap');
+      const viewCube = document.getElementById('view-cube');
+      if (viewCube && viewCubeWrap) {
+        viewCube.style.transform = `rotateX(${EditorContext.camera.pitch}rad) rotateY(${-EditorContext.camera.yaw}rad)`;
+        viewCubeWrap.style.setProperty('--yaw', `${EditorContext.camera.yaw}rad`);
+        viewCubeWrap.style.setProperty('--inv-pitch', `${-EditorContext.camera.pitch}rad`);
+      }
+
       // Draw frame
       EditorContext.engineRef.rendererPlugin.draw(cameraState, EditorContext.sceneOrder, Renderable, RenderMesh);
       
