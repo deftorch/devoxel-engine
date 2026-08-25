@@ -27,17 +27,36 @@ fn vs_main(
   return out;
 }
 
+fn getGridColor(uv : vec2<f32>) -> vec3<f32> {
+  let grid = fract(uv * 2.0);
+  let line = step(0.95, grid.x) + step(0.95, grid.y);
+  return mix(vec3<f32>(0.7, 0.7, 0.7), vec3<f32>(0.2, 0.6, 0.9), clamp(line, 0.0, 1.0));
+}
+
 @fragment
 fn fs_main(in : VOut) -> @location(0) vec4<f32> {
   let lightDir = normalize(vec3<f32>(0.45, 0.85, 0.3));
   let skyColor = vec3<f32>(0.53, 0.72, 0.86);
   let groundAmbient = vec3<f32>(0.30, 0.27, 0.23);
 
-  let hemi = clamp(normalize(in.normal).y * 0.5 + 0.5, 0.0, 1.0);
+  let normal = normalize(in.normal);
+  let hemi = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
   let ambient = mix(groundAmbient, skyColor * 0.55, hemi);
 
-  let diffuse = max(dot(normalize(in.normal), lightDir), 0.0);
-  let lit = in.color * (ambient + diffuse * 0.7);
+  let diffuse = max(dot(normal, lightDir), 0.0);
+  
+  // --- Triplanar Mapping ---
+  var blendWeights = abs(normal);
+  blendWeights = blendWeights / (blendWeights.x + blendWeights.y + blendWeights.z);
+  
+  let colX = getGridColor(in.worldPos.zy);
+  let colY = getGridColor(in.worldPos.xz);
+  let colZ = getGridColor(in.worldPos.xy);
+  
+  let triplanarColor = colX * blendWeights.x + colY * blendWeights.y + colZ * blendWeights.z;
+  let baseColor = triplanarColor * in.color;
+
+  let lit = baseColor * (ambient + diffuse * 0.7);
 
   let dist = length(in.worldPos - u.cameraPos);
   let fogFactor = clamp(1.0 - exp(-dist * u.fogDensity), 0.0, 1.0);

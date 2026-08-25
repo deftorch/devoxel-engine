@@ -1,6 +1,6 @@
 import { CHUNK_SX, CHUNK_SY, CHUNK_SZ } from '../../core/config.js';
 import { BLOCK_IDS } from '../../data/blocks.js';
-import { heightAt } from './noise.js';
+import { heightAt, heightRaw, valueNoise3D } from './noise.js';
 import { FlatGridStorage } from '../../core/voxel/FlatGridStorage.js';
 import { OctreeStorage } from '../../core/voxel/OctreeStorage.js';
 import { BrickMapStorage } from '../../core/voxel/BrickMapStorage.js';
@@ -21,7 +21,18 @@ export function generateChunkVoxels(chunkX, chunkZ, storageType = 'flat', terrai
       const wx = chunkX * CHUNK_SX + x;
       const wz = chunkZ * CHUNK_SZ + z;
 
-      if (terrainType === 'normal') {
+      if (storageType === 'sdf' && terrainType === 'normal') {
+        const h = heightRaw(wx, wz);
+        for (let y = 0; y < CHUNK_SY; y++) {
+          // SDF base: jarak dari ketinggian permukaan. <0 artinya di dalam tanah.
+          let dist = y - h;
+          // Tambahkan variasi noise 3D (gua/overhang)
+          const noise = valueNoise3D(wx * 0.1, y * 0.1, wz * 0.1) * 8.0 - 4.0;
+          dist += noise;
+          
+          storage.setSDF(x, y, z, dist);
+        }
+      } else if (terrainType === 'normal') {
         const h = heightAt(wx, wz, CHUNK_SY);
         for (let y = 0; y < CHUNK_SY; y++) {
           let b = BLOCK_IDS.AIR;
@@ -90,9 +101,10 @@ export function generateChunkVoxels(chunkX, chunkZ, storageType = 'flat', terrai
     }
   }
 
-  if (typeof storage.buildSDF === 'function') {
-    storage.buildSDF();
-  }
+  // Tidak perlu memanggil buildSDF karena SDF sudah diisi secara native oleh setSDF.
+  // if (typeof storage.buildSDF === 'function') {
+  //   storage.buildSDF();
+  // }
 
   return storage;
 }

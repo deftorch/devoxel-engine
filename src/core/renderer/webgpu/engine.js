@@ -155,12 +155,13 @@ export async function initWebGPU(canvas) {
       new Float32Array(vertexBuffer.getMappedRange()).set(vertexData);
       vertexBuffer.unmap();
 
+      const iData32 = indexData instanceof Uint32Array ? indexData : new Uint32Array(indexData);
       const indexBuffer = device.createBuffer({
-        size: Math.ceil(indexData.byteLength / 4) * 4,
+        size: Math.ceil(iData32.byteLength / 4) * 4,
         usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
         mappedAtCreation: true,
       });
-      new Uint32Array(indexBuffer.getMappedRange()).set(indexData);
+      new Uint32Array(indexBuffer.getMappedRange()).set(iData32);
       indexBuffer.unmap();
 
       return {

@@ -30,10 +30,15 @@ async function main() {
   try {
     engine = new VoxelEngine({
       chunkSize: [CHUNK_SX, CHUNK_SY, CHUNK_SZ],
-      storage: 'flatgrid', // Default saat awal
-      mesher: 'worker-greedy',
+      storage: 'sdf', // Default saat awal
+      mesher: 'surfacenets',
       renderer: currentRenderMode === 'raytrace' ? 'raytrace' : 'webgpu'
     });
+    
+    // Sinkronkan UI form elements
+    const storageSelect = document.getElementById('storage-select');
+    if (storageSelect) storageSelect.value = 'sdf';
+    
     await engine.start(ui.canvas);
     renderer = engine.rendererPlugin;
   } catch (e) {
@@ -165,6 +170,10 @@ async function main() {
   document.getElementById('rebuild-btn').addEventListener('click', () => {
     const storageType = document.getElementById('storage-select').value;
     const terrainType = document.getElementById('terrain-select').value;
+    
+    const requiredMesher = storageType === 'sdf' ? 'surfacenets' : 'greedy_async';
+    engine.useMesher(engine.registry.createMesher(requiredMesher));
+
     buildWorld(storageType, terrainType, currentRenderMode);
   });
 
@@ -213,7 +222,7 @@ async function main() {
       engine = new VoxelEngine({
         chunkSize: [CHUNK_SX, CHUNK_SY, CHUNK_SZ],
         storage: storageType,
-        mesher: 'greedy',
+        mesher: storageType === 'sdf' ? 'surfacenets' : 'greedy_async',
         renderer: currentRenderMode === 'raytrace' ? 'raytrace' : 'webgpu'
       });
       await engine.start(ui.canvas);
@@ -227,7 +236,7 @@ async function main() {
     buildWorld(storageType, terrainType, currentRenderMode);
   });
 
-  await buildWorld('flat', 'normal', currentRenderMode);
+  await buildWorld('sdf', 'normal', currentRenderMode);
 
   const player = addEntity(world);
   addGrowable(world, player, Position);

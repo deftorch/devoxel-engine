@@ -2,83 +2,52 @@ import { VoxelStorage } from './VoxelStorage.js';
 
 /**
  * SDF (Signed Distance Field) Storage
- * Mendemonstrasikan betapa mahalnya update data, namun super cepat untuk traversal.
+ * Menyimpan data kepadatan/jarak kontinu (float) untuk gaya voxel smooth.
+ * Nilai <= 0 merepresentasikan area solid (di dalam permukaan), 
+ * nilai > 0 merepresentasikan udara (di luar permukaan).
  */
 export class SDFStorage extends VoxelStorage {
   constructor(sx, sy, sz) {
     super([sx, sy, sz]);
-    this.data = new Uint8Array(sx * sy * sz);
-    this.sdf = new Float32Array(sx * sy * sz); // Menyimpan jarak ke solid terdekat
-    this.needsUpdate = true;
-  }
-
-  get(x, y, z) {
-    if (x < 0 || x >= this.dims[0] || y < 0 || y >= this.dims[1] || z < 0 || z >= this.dims[2]) return 0;
-    return this.data[x + y * this.dims[0] + z * this.dims[0] * this.dims[1]];
-  }
-
-  getSDF(x, y, z) {
-    if (x < 0 || x >= this.dims[0] || y < 0 || y >= this.dims[1] || z < 0 || z >= this.dims[2]) return 0;
-    return this.sdf[x + y * this.dims[0] + z * this.dims[0] * this.dims[1]];
-  }
-
-  set(x, y, z, val) {
-    if (x < 0 || x >= this.dims[0] || y < 0 || y >= this.dims[1] || z < 0 || z >= this.dims[2]) return;
-    const idx = x + y * this.dims[0] + z * this.dims[0] * this.dims[1];
-    if (this.data[idx] !== val) {
-      this.data[idx] = val;
-      // Kapanpun ada 1 blok yang diubah, SDF menjadi invalid dan harus dihitung ulang!
-      this.needsUpdate = true;
-    }
+    // Array tunggal untuk menyimpan nilai float jarak/density
+    this.sdf = new Float32Array(sx * sy * sz);
+    
+    // Inisialisasi dengan 1.0 (udara kosong) di mana-mana
+    this.sdf.fill(1.0);
   }
 
   /**
-   * Mengkalkulasi ulang seluruh nilai jarak (SDF) dalam Grid.
-   * Ini menggunakan pendekatan "Manhattan Distance Transform" 2-pass O(N^3)
-   * sebagai demonstrasi betapa beratnya rekonstruksi SDF.
+   * Mengambil nilai material blocky (Kompatibilitas mundur)
+   * Jika SDF <= 0 (solid), kembalikan 1 (material generik). Jika > 0, kembalikan 0 (udara).
    */
-  buildSDF() {
-    if (!this.needsUpdate) return;
+  get(x, y, z) {
+    if (x < 0 || x >= this.dims[0] || y < 0 || y >= this.dims[1] || z < 0 || z >= this.dims[2]) return 0;
+    const val = this.sdf[x + y * this.dims[0] + z * this.dims[0] * this.dims[1]];
+    return val <= 0.0 ? 1 : 0;
+  }
 
-    const [sx, sy, sz] = this.dims;
-    const maxDist = Math.max(sx, sy, sz) + 1;
-    const len = sx * sy * sz;
+  /**
+   * Menyeting nilai material blocky (Kompatibilitas mundur)
+   * Jika val > 0 (solid), set SDF ke -1.0. Jika 0 (udara), set SDF ke 1.0.
+   */
+  set(x, y, z, val) {
+    if (x < 0 || x >= this.dims[0] || y < 0 || y >= this.dims[1] || z < 0 || z >= this.dims[2]) return;
+    this.sdf[x + y * this.dims[0] + z * this.dims[0] * this.dims[1]] = val > 0 ? -1.0 : 1.0;
+  }
 
-    // Tahap 1: Inisialisasi - Jika padat = 0, jika udara = max (infinity)
-    for (let i = 0; i < len; i++) {
-      this.sdf[i] = this.data[i] > 0 ? 0 : maxDist;
-    }
+  /**
+   * Mengambil nilai float kontinu (SDF asli)
+   */
+  getSDF(x, y, z) {
+    if (x < 0 || x >= this.dims[0] || y < 0 || y >= this.dims[1] || z < 0 || z >= this.dims[2]) return 1.0; // Anggap luar batas adalah udara
+    return this.sdf[x + y * this.dims[0] + z * this.dims[0] * this.dims[1]];
+  }
 
-    // Tahap 2: Forward Sweep (+x, +y, +z)
-    for (let z = 0; z < sz; z++) {
-      for (let y = 0; y < sy; y++) {
-        for (let x = 0; x < sx; x++) {
-          const idx = x + y * sx + z * sx * sy;
-          if (this.sdf[idx] === 0) continue;
-
-          let minDist = this.sdf[idx];
-          if (x > 0) minDist = Math.min(minDist, this.sdf[idx - 1] + 1);
-          if (y > 0) minDist = Math.min(minDist, this.sdf[idx - sx] + 1);
-          if (z > 0) minDist = Math.min(minDist, this.sdf[idx - sx * sy] + 1);
-          this.sdf[idx] = minDist;
-        }
-      }
-    }
-
-    // Tahap 3: Backward Sweep (-x, -y, -z)
-    for (let z = sz - 1; z >= 0; z--) {
-      for (let y = sy - 1; y >= 0; y--) {
-        for (let x = sx - 1; x >= 0; x--) {
-          const idx = x + y * sx + z * sx * sy;
-          let minDist = this.sdf[idx];
-          if (x < sx - 1) minDist = Math.min(minDist, this.sdf[idx + 1] + 1);
-          if (y < sy - 1) minDist = Math.min(minDist, this.sdf[idx + sx] + 1);
-          if (z < sz - 1) minDist = Math.min(minDist, this.sdf[idx + sx * sy] + 1);
-          this.sdf[idx] = minDist;
-        }
-      }
-    }
-
-    this.needsUpdate = false;
+  /**
+   * Menyeting nilai float kontinu (SDF asli)
+   */
+  setSDF(x, y, z, val) {
+    if (x < 0 || x >= this.dims[0] || y < 0 || y >= this.dims[1] || z < 0 || z >= this.dims[2]) return;
+    this.sdf[x + y * this.dims[0] + z * this.dims[0] * this.dims[1]] = val;
   }
 }

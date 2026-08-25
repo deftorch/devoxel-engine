@@ -1,0 +1,209 @@
+import { VoxelMesher } from './VoxelMesher.js';
+
+// Lookup table untuk 8 sudut sebuah kubus/sel
+const CUBE_CORNERS = [
+  [0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+  [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]
+];
+
+// 12 rusuk kubus, masing-masing menghubungkan 2 sudut
+const CUBE_EDGES = [
+  [0, 1], [1, 2], [2, 3], [3, 0], // Bawah
+  [4, 5], [5, 6], [6, 7], [7, 4], // Atas
+  [0, 4], [1, 5], [2, 6], [3, 7]  // Vertikal
+];
+
+/**
+ * Implementasi Surface Nets untuk menghasilkan smooth mesh dari data SDF.
+ */
+export class SurfaceNetsMesher extends VoxelMesher {
+  constructor() {
+    super('SurfaceNetsMesher');
+  }
+
+  /**
+   * Helper untuk mendapatkan nilai SDF dengan mempertimbangkan neighbor chunk
+   */
+  _getSDF(storage, ctx, x, y, z, dims) {
+    if (x >= 0 && x < dims[0] && y >= 0 && y < dims[1] && z >= 0 && z < dims[2]) {
+      return storage.getSDF(x, y, z);
+    }
+    
+    // Keluar batas chunk, coba ambil dari tetangga
+    if (ctx && ctx.getNeighbor) {
+      let nx = 0, ny = 0, nz = 0;
+      let lx = x, ly = y, lz = z;
+      
+      if (x < 0) { nx = -1; lx = x + dims[0]; } else if (x >= dims[0]) { nx = 1; lx = x - dims[0]; }
+      if (y < 0) { ny = -1; ly = y + dims[1]; } else if (y >= dims[1]) { ny = 1; ly = y - dims[1]; }
+      if (z < 0) { nz = -1; lz = z + dims[2]; } else if (z >= dims[2]) { nz = 1; lz = z - dims[2]; }
+      
+      const neighbor = ctx.getNeighbor(nx, ny, nz);
+      if (neighbor && typeof neighbor.getSDF === 'function') {
+        return neighbor.getSDF(lx, ly, lz);
+      }
+    }
+    return 1.0; // Default: udara jika tidak ada data
+  }
+
+  /**
+   * Helper untuk menghitung normal dengan gradien (turunan parsial)
+   */
+  _getNormal(storage, ctx, x, y, z, dims) {
+    const d = 1; // Jarak sampling
+    const nx = this._getSDF(storage, ctx, x + d, y, z, dims) - this._getSDF(storage, ctx, x - d, y, z, dims);
+    const ny = this._getSDF(storage, ctx, x, y + d, z, dims) - this._getSDF(storage, ctx, x, y - d, z, dims);
+    const nz = this._getSDF(storage, ctx, x, y, z + d, dims) - this._getSDF(storage, ctx, x, y, z - d, dims);
+    
+    const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    if (len === 0) return [0, 1, 0];
+    return [nx / len, ny / len, nz / len];
+  }
+
+  generateMesh(chunkStorage, ctx = null) {
+    const dims = chunkStorage.dims;
+    let offsetX = 0, offsetY = 0, offsetZ = 0;
+    if (ctx && ctx.chunkCoord) {
+      offsetX = ctx.chunkCoord[0] * dims[0];
+      offsetY = ctx.chunkCoord[1] * dims[1];
+      offsetZ = ctx.chunkCoord[2] * dims[2];
+    }
+
+    const vertexData = [];
+    const indices = [];
+
+    // Map untuk melacak index vertex dari setiap cell
+    // Menyederhanakan penjahitan (stitching) wajah quad
+    const cellVertices = new Map();
+    const getCellKey = (x, y, z) => `${x},${y},${z}`;
+
+    // Pass 1: Identifikasi permukaan dan hitung posisi vertex tiap cell
+    for (let z = 0; z < dims[2]; z++) {
+      for (let y = 0; y < dims[1]; y++) {
+        for (let x = 0; x < dims[0]; x++) {
+          
+          let mask = 0;
+          const cornerSDF = [];
+          for (let i = 0; i < 8; i++) {
+            const cx = x + CUBE_CORNERS[i][0];
+            const cy = y + CUBE_CORNERS[i][1];
+            const cz = z + CUBE_CORNERS[i][2];
+            const sdf = this._getSDF(chunkStorage, ctx, cx, cy, cz, dims);
+            cornerSDF.push(sdf);
+            if (sdf <= 0) mask |= (1 << i);
+          }
+
+          // Jika semua sudut padat (mask 255) atau semua udara (mask 0), lewati.
+          if (mask === 0 || mask === 255) continue;
+
+          // Temukan pusat dari potongan (intersections) tepi
+          let vx = 0, vy = 0, vz = 0;
+          let edgeCount = 0;
+
+          for (let i = 0; i < 12; i++) {
+            const c1 = CUBE_EDGES[i][0];
+            const c2 = CUBE_EDGES[i][1];
+            const s1 = cornerSDF[c1];
+            const s2 = cornerSDF[c2];
+
+            // Cek apakah tepi ini memotong permukaan (perubahan sign)
+            if ((s1 <= 0 && s2 > 0) || (s1 > 0 && s2 <= 0)) {
+              // Interpolasi linear di sepanjang tepi
+              const t = s1 / (s1 - s2);
+              const px = x + CUBE_CORNERS[c1][0] + t * (CUBE_CORNERS[c2][0] - CUBE_CORNERS[c1][0]);
+              const py = y + CUBE_CORNERS[c1][1] + t * (CUBE_CORNERS[c2][1] - CUBE_CORNERS[c1][1]);
+              const pz = z + CUBE_CORNERS[c1][2] + t * (CUBE_CORNERS[c2][2] - CUBE_CORNERS[c1][2]);
+              vx += px; vy += py; vz += pz;
+              edgeCount++;
+            }
+          }
+
+          if (edgeCount > 0) {
+            vx /= edgeCount;
+            vy /= edgeCount;
+            vz /= edgeCount;
+
+            const norm = this._getNormal(chunkStorage, ctx, vx, vy, vz, dims);
+            
+            // Generate vertex data yang di-interleave (Pos 3, Nor 3, Col 3 = 9 float per vertex)
+            const vIndex = vertexData.length / 9;
+            vertexData.push(
+              vx + offsetX, vy + offsetY, vz + offsetZ, // Position
+              norm[0], norm[1], norm[2],                // Normal
+              0.8, 0.8, 0.8                             // Color (Default gray)
+            );
+            
+            cellVertices.set(getCellKey(x, y, z), vIndex);
+          }
+        }
+      }
+    }
+
+    // Pass 2: Jahit vertex menjadi quad (lalu triangle) berdasar tepi antar cell
+    for (let z = 0; z < dims[2]; z++) {
+      for (let y = 0; y < dims[1]; y++) {
+        for (let x = 0; x < dims[0]; x++) {
+          
+          // Cek tepi X (menghubungkan point ini dengan x+1)
+          const s0 = this._getSDF(chunkStorage, ctx, x, y, z, dims);
+          const sX = this._getSDF(chunkStorage, ctx, x + 1, y, z, dims);
+          if ((s0 <= 0 && sX > 0) || (s0 > 0 && sX <= 0)) {
+            const v1 = cellVertices.get(getCellKey(x, y, z));
+            const v2 = cellVertices.get(getCellKey(x, y - 1, z));
+            const v3 = cellVertices.get(getCellKey(x, y - 1, z - 1));
+            const v4 = cellVertices.get(getCellKey(x, y, z - 1));
+            
+            if (v1 !== undefined && v2 !== undefined && v3 !== undefined && v4 !== undefined) {
+              if (s0 <= 0) {
+                indices.push(v1, v2, v3, v1, v3, v4);
+              } else {
+                indices.push(v1, v4, v3, v1, v3, v2);
+              }
+            }
+          }
+
+          // Cek tepi Y (menghubungkan point ini dengan y+1)
+          const sY = this._getSDF(chunkStorage, ctx, x, y + 1, z, dims);
+          if ((s0 <= 0 && sY > 0) || (s0 > 0 && sY <= 0)) {
+            const v1 = cellVertices.get(getCellKey(x, y, z));
+            const v2 = cellVertices.get(getCellKey(x, y, z - 1));
+            const v3 = cellVertices.get(getCellKey(x - 1, y, z - 1));
+            const v4 = cellVertices.get(getCellKey(x - 1, y, z));
+
+            if (v1 !== undefined && v2 !== undefined && v3 !== undefined && v4 !== undefined) {
+              if (s0 <= 0) {
+                indices.push(v1, v2, v3, v1, v3, v4);
+              } else {
+                indices.push(v1, v4, v3, v1, v3, v2);
+              }
+            }
+          }
+
+          // Cek tepi Z (menghubungkan point ini dengan z+1)
+          const sZ = this._getSDF(chunkStorage, ctx, x, y, z + 1, dims);
+          if ((s0 <= 0 && sZ > 0) || (s0 > 0 && sZ <= 0)) {
+            const v1 = cellVertices.get(getCellKey(x, y, z));
+            const v2 = cellVertices.get(getCellKey(x - 1, y, z));
+            const v3 = cellVertices.get(getCellKey(x - 1, y - 1, z));
+            const v4 = cellVertices.get(getCellKey(x, y - 1, z));
+
+            if (v1 !== undefined && v2 !== undefined && v3 !== undefined && v4 !== undefined) {
+              if (s0 <= 0) {
+                indices.push(v1, v2, v3, v1, v3, v4);
+              } else {
+                indices.push(v1, v4, v3, v1, v3, v2);
+              }
+            }
+          }
+
+        }
+      }
+    }
+
+    return {
+      vertexData: new Float32Array(vertexData),
+      indexData: (vertexData.length / 9) > 65535 ? new Uint32Array(indices) : new Uint16Array(indices),
+      indexCount: indices.length
+    };
+  }
+}

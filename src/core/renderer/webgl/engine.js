@@ -112,9 +112,10 @@ export async function initWebGL(canvas) {
       gl.enableVertexAttribArray(aCol);
       gl.vertexAttribPointer(aCol, 3, gl.FLOAT, false, stride, 24);
 
+      const iData32 = indexData instanceof Uint32Array ? indexData : new Uint32Array(indexData);
       const ibo = gl.createBuffer();
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
-      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indexData, gl.STATIC_DRAW);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, iData32, gl.STATIC_DRAW);
 
       gl.bindVertexArray(null);
 
