@@ -13,12 +13,46 @@ const CUBE_EDGES = [
   [0, 4], [1, 5], [2, 6], [3, 7]  // Vertikal
 ];
 
+// DEBUG: palet warna berbeda per chunk (checkerboard hash) supaya batas
+// antar chunk gampang dibedakan secara visual di layar. Dipakai hanya
+// saat ctx.debugChunkBounds === true (lihat VoxelEngine.setDebugChunkBounds).
+const DEBUG_CHUNK_PALETTE = [
+  [1.0, 0.35, 0.35], // merah
+  [0.35, 1.0, 0.45], // hijau
+  [0.4, 0.55, 1.0], // biru
+  [1.0, 0.9, 0.3], // kuning
+  [1.0, 0.4, 1.0], // magenta
+  [0.35, 1.0, 1.0], // cyan
+];
+// Warna terang khusus untuk vertex yang cell-nya di tepi/padding chunk
+// (x/y/z <= 0 atau >= dims-1 -- termasuk cell padding -1 yang dipakai
+// Pass 1 untuk stitching, lihat komentar di generateMesh). Kalau ada
+// robekan/seam antar chunk (mis. karena chunk tetangga tidak ikut
+// di-remesh setelah edit voxel di dekat batas), garis putih terang ini
+// akan terlihat terputus/ada celah di sisi yang robek -- jadi gampang
+// diperiksa secara visual.
+const DEBUG_EDGE_COLOR = [1.0, 1.0, 1.0];
+
 /**
  * Implementasi Surface Nets untuk menghasilkan smooth mesh dari data SDF.
  */
 export class SurfaceNetsMesher extends VoxelMesher {
   constructor() {
     super('SurfaceNetsMesher');
+  }
+
+  /**
+   * DEBUG: pilih warna tint untuk sebuah chunk berdasar koordinatnya,
+   * supaya chunk yang bersebelahan konsisten mendapat warna berbeda
+   * (checkerboard-style hash, bukan cuma ganjil/genap).
+   */
+  _chunkDebugTint(chunkCoord) {
+    if (!chunkCoord) return DEBUG_CHUNK_PALETTE[0];
+    const [cx, cy, cz] = chunkCoord;
+    let n = (cx * 374761393 + cy * 668265263 + cz * 1274126177) | 0;
+    n = (n ^ (n >>> 13)) * 1274126177;
+    n = (n ^ (n >>> 16)) >>> 0;
+    return DEBUG_CHUNK_PALETTE[n % DEBUG_CHUNK_PALETTE.length];
   }
 
   /**
@@ -119,6 +153,10 @@ export class SurfaceNetsMesher extends VoxelMesher {
     const cellVertices = new Map();
     const getCellKey = (x, y, z) => `${x},${y},${z}`;
 
+    // DEBUG: pewarnaan batas chunk (lihat DEBUG_CHUNK_PALETTE di atas)
+    const debugChunkBounds = !!(ctx && ctx.debugChunkBounds);
+    const debugTint = debugChunkBounds ? this._chunkDebugTint(ctx.chunkCoord) : null;
+
     // Pass 1: Identifikasi permukaan dan hitung posisi vertex tiap cell
     //
     // Loop di sini SENGAJA dimulai dari -1 (bukan 0), memberi "padding" 1 sel
@@ -176,13 +214,24 @@ export class SurfaceNetsMesher extends VoxelMesher {
             vz /= edgeCount;
 
             const norm = this._getNormal(chunkStorage, ctx, vx, vy, vz, dims);
-            
+
+            // Warna vertex: default gray, atau (kalau debugChunkBounds aktif)
+            // tint per-chunk + putih terang tepat di cell tepi/padding chunk
+            // (x/y/z <= 0 atau >= dims-1, termasuk cell padding -1 di atas)
+            // supaya seam antar chunk gampang diperiksa secara visual.
+            let color = [0.8, 0.8, 0.8];
+            if (debugChunkBounds) {
+              const atChunkBoundary =
+                x <= 0 || x >= dims[0] - 1 || y <= 0 || y >= dims[1] - 1 || z <= 0 || z >= dims[2] - 1;
+              color = atChunkBoundary ? DEBUG_EDGE_COLOR : debugTint;
+            }
+
             // Generate vertex data yang di-interleave (Pos 3, Nor 3, Col 3 = 9 float per vertex)
             const vIndex = vertexData.length / 9;
             vertexData.push(
               vx + offsetX, vy + offsetY, vz + offsetZ, // Position
               norm[0], norm[1], norm[2],                // Normal
-              0.8, 0.8, 0.8                             // Color (Default gray)
+              color[0], color[1], color[2]              // Color (default gray, atau debug tint)
             );
             
             cellVertices.set(getCellKey(x, y, z), vIndex);

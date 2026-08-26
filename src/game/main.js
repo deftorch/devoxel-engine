@@ -25,6 +25,14 @@ async function main() {
     ? document.getElementById('render-select').value
     : 'raster';
 
+  // DEBUG: pewarnaan batas chunk (lihat VoxelEngine.setDebugChunkBounds +
+  // SurfaceNetsMesher). Disimpan di luar `engine` karena engine bisa
+  // dibuat ulang (mis. saat ganti mesin render), supaya preferensi user
+  // tetap terbawa ke instance engine yang baru.
+  let debugChunkBoundsEnabled = document.getElementById('debug-chunk-bounds')
+    ? document.getElementById('debug-chunk-bounds').checked
+    : false;
+
   let engine;
   let renderer;
   try {
@@ -34,7 +42,8 @@ async function main() {
       mesher: 'surfacenets',
       renderer: currentRenderMode === 'raytrace' ? 'raytrace' : 'webgpu'
     });
-    
+    engine.setDebugChunkBounds(debugChunkBoundsEnabled);
+
     // Sinkronkan UI form elements
     const storageSelect = document.getElementById('storage-select');
     if (storageSelect) storageSelect.value = 'sdf';
@@ -167,6 +176,17 @@ async function main() {
     ui.showHUD();
   }
 
+  // DEBUG: toggle pewarnaan batas chunk. Menandai semua chunk dirty lewat
+  // engine.setDebugChunkBounds(), lalu remeshDirtyChunks() di render loop
+  // (frame()) yang otomatis memprosesnya di frame berikutnya.
+  const debugChunkBoundsToggle = document.getElementById('debug-chunk-bounds');
+  if (debugChunkBoundsToggle) {
+    debugChunkBoundsToggle.addEventListener('change', (e) => {
+      debugChunkBoundsEnabled = e.target.checked;
+      if (engine) engine.setDebugChunkBounds(debugChunkBoundsEnabled);
+    });
+  }
+
   document.getElementById('rebuild-btn').addEventListener('click', () => {
     const storageType = document.getElementById('storage-select').value;
     const terrainType = document.getElementById('terrain-select').value;
@@ -225,6 +245,7 @@ async function main() {
         mesher: storageType === 'sdf' ? 'surfacenets' : 'greedy_async',
         renderer: currentRenderMode === 'raytrace' ? 'raytrace' : 'webgpu'
       });
+      engine.setDebugChunkBounds(debugChunkBoundsEnabled);
       await engine.start(ui.canvas);
       renderer = engine.rendererPlugin;
       setupEngineListeners(engine);

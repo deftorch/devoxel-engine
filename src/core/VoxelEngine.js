@@ -44,6 +44,11 @@ export class VoxelEngine {
     // State Dunia: chunkKey ("cx,cy,cz") -> { storage, dirty, mesh }
     this.chunks = new Map();
 
+    // DEBUG: kalau true, mesher (yang mendukungnya) akan mewarnai vertex di
+    // dekat batas chunk supaya robekan/seam antar chunk gampang diperiksa
+    // secara visual. Lihat SurfaceNetsMesher + ctx.debugChunkBounds.
+    this.debugChunkBounds = false;
+
     // Resolve plugins declared by id in the config, if any.
     if (options.storage) this.useStorageProvider(this._resolveStorageFactory(options.storage));
     if (options.mesher) this.useMesher(this._resolveMesher(options.mesher));
@@ -197,6 +202,7 @@ export class VoxelEngine {
     const ctx = {
       chunkCoord: [cx, cy, cz],
       getNeighbor: (dx, dy, dz) => this.getChunk(cx + dx, cy + dy, cz + dz)?.storage ?? null,
+      debugChunkBounds: this.debugChunkBounds,
     };
 
     this.emit('beforeMesh', chunk);
@@ -215,6 +221,17 @@ export class VoxelEngine {
       this.emit('afterMesh', { chunk, meshData: result });
       return result;
     }
+  }
+
+  /**
+   * DEBUG: nyalakan/matikan pewarnaan batas chunk (lihat catatan di
+   * constructor). Menandai semua chunk sebagai dirty supaya efeknya
+   * langsung terlihat di remesh berikutnya (mis. dipanggil dari
+   * remeshDirtyChunks() di render loop).
+   */
+  setDebugChunkBounds(enabled) {
+    this.debugChunkBounds = !!enabled;
+    for (const chunk of this.chunks.values()) chunk.dirty = true;
   }
 
   /** Rebuild every chunk currently marked dirty. */
