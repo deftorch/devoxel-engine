@@ -236,3 +236,60 @@ describe('VoxelEngine — event hooks', () => {
     assert.equal(count, 1);
   });
 });
+
+// Roadmap A.1 -- Chunk Streaming: unloadChunk() adalah primitive yang dipakai
+// ChunkStreamer (lewat main.js) untuk membuang chunk yang keluar radius,
+// tanpa menyentuh storage permanen apapun (persistensi ke IndexedDB adalah
+// tanggung jawab Fase A.3, bukan bagian ini).
+describe('VoxelEngine — unloadChunk (Roadmap A.1)', () => {
+  test('menghapus chunk dari this.chunks', () => {
+    const engine = makeEngine();
+    engine.getOrCreateChunk(2, 0, 3);
+    assert.notEqual(engine.getChunk(2, 0, 3), null);
+
+    engine.unloadChunk(2, 0, 3);
+    assert.equal(engine.getChunk(2, 0, 3), null);
+  });
+
+  test('return chunk record yang baru di-unload', () => {
+    const engine = makeEngine();
+    const chunk = engine.getOrCreateChunk(1, 0, 1);
+    const unloaded = engine.unloadChunk(1, 0, 1);
+    assert.equal(unloaded, chunk);
+  });
+
+  test('unload chunk yang tidak pernah ada adalah no-op aman (return null, tidak throw)', () => {
+    const engine = makeEngine();
+    assert.doesNotThrow(() => {
+      const result = engine.unloadChunk(99, 0, 99);
+      assert.equal(result, null);
+    });
+  });
+
+  test('emit "chunkUnloaded" dengan chunk record SEBELUM entry dihapus dari map', () => {
+    const engine = makeEngine();
+    engine.getOrCreateChunk(5, 0, 5);
+    let sawChunkInMapDuringEvent = false;
+    engine.on('chunkUnloaded', (chunk) => {
+      assert.equal(chunk.cx, 5);
+      // Selama listener berjalan, chunk record harus masih bisa dibaca
+      // lewat getChunk() -- penting untuk Fase A.3 (serialize sebelum hilang).
+      sawChunkInMapDuringEvent = engine.getChunk(5, 0, 5) === chunk;
+    });
+    engine.unloadChunk(5, 0, 5);
+    assert.equal(sawChunkInMapDuringEvent, true);
+    assert.equal(engine.getChunk(5, 0, 5), null);
+  });
+
+  test('chunk yang di-unload lalu diminta lagi lewat getOrCreateChunk menghasilkan chunk baru (data lama hilang)', () => {
+    const engine = makeEngine();
+    const original = engine.getOrCreateChunk(0, 0, 0);
+    original.storage.set(1, 1, 1, 42);
+
+    engine.unloadChunk(0, 0, 0);
+    const recreated = engine.getOrCreateChunk(0, 0, 0);
+
+    assert.notEqual(recreated, original);
+    assert.equal(recreated.storage.get(1, 1, 1), 0);
+  });
+});

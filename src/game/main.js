@@ -1,5 +1,5 @@
 import { addEntity, query, addComponent } from 'bitecs';
-import { WORLD_CHUNKS, CHUNK_SX, CHUNK_SY, CHUNK_SZ } from '../core/config.js';
+import { WORLD_CHUNKS, CHUNK_SX, CHUNK_SY, CHUNK_SZ, DEFAULT_VIEW_DISTANCE } from '../core/config.js';
 import {
   world,
   Position,
@@ -17,6 +17,7 @@ import { UIManager } from './ui/UIManager.js';
 import { InputManager } from './input/InputManager.js';
 import { CommandBus } from '../core/api/CommandBus.js';
 import { generateChunkVoxels } from './world/chunk.js';
+import { ChunkStreamer } from '../core/world/ChunkStreamer.js';
 
 async function main() {
   const ui = new UIManager();
@@ -57,6 +58,44 @@ async function main() {
 
   const chunkEntities = [];
   const chunkEidMap = new Map();
+
+  // Roadmap A.1 -- Chunk Streaming Berbasis Posisi Pemain (sinkron dulu).
+  // `chunkStreamer` non-null cuma ketika mode "Infinite Terrain" aktif;
+  // kalau null, dunia tetap berperilaku seperti sebelumnya (grid
+  // WORLD_CHUNKS x WORLD_CHUNKS lewat buildWorld(), dipakai mode benchmark).
+  let chunkStreamer = null;
+  let infiniteTerrainEnabled = false;
+
+  /**
+   * Load 1 chunk hasil keputusan ChunkStreamer. Generation masih di main
+   * thread di fase ini (sesuai A.1 -- worker generation baru di A.2), dan
+   * sengaja memakai jalur yang SAMA dengan buildWorld() (getOrCreateChunk +
+   * generateChunkVoxels + dirty=true) supaya listener 'chunkCreated' dan
+   * remeshDirtyChunks() di render loop menanganinya tanpa kode duplikat.
+   */
+  function loadStreamedChunk(cx, cz, storageType, terrainType) {
+    const chunk = engine.getOrCreateChunk(cx, 0, cz);
+    chunk.storage = generateChunkVoxels(cx, cz, storageType, terrainType);
+    chunk.dirty = true;
+  }
+
+  /**
+   * Unload 1 chunk hasil keputusan ChunkStreamer: hapus dari VoxelEngine
+   * (data storage, TIDAK dipersist -- lihat catatan A.3 di roadmap) dan
+   * hapus entity ECS terkait supaya GPU buffer-nya di-dispose lewat
+   * observer onRemove(RenderMesh)/onRemove(VoxelVolume) di components.js.
+   */
+  function unloadStreamedChunk(cx, cz) {
+    engine.unloadChunk(cx, 0, cz);
+
+    const key = `${cx},0,${cz}`;
+    const eid = chunkEidMap.get(key);
+    if (eid == null) return;
+    chunkEidMap.delete(key);
+    const idx = chunkEntities.indexOf(eid);
+    if (idx !== -1) chunkEntities.splice(idx, 1);
+    destroyChunkEntity(world, eid);
+  }
 
   function setupEngineListeners(engineInstance) {
     // Bersihkan listener lama (berjaga-jaga jika menggunakan instance yang sama)
@@ -187,7 +226,55 @@ async function main() {
     });
   }
 
+  // Roadmap A.1 -- toggle antara mode benchmark (dunia tetap, WORLD_CHUNKS x
+  // WORLD_CHUNKS) dan mode Infinite Terrain (streaming berbasis posisi
+  // pemain). Radius diambil dari DEFAULT_VIEW_DISTANCE (config.js).
+  const infiniteTerrainToggle = document.getElementById('infinite-terrain-toggle');
+  if (infiniteTerrainToggle) {
+    infiniteTerrainToggle.addEventListener('change', (e) => {
+      if (e.target.checked && currentRenderMode === 'raytrace') {
+        // VoxelRT belum diuji untuk chunk streaming (storage/volume alloc-nya
+        // berbeda) -- di luar scope A.1, jadi tolak kombinasi ini eksplisit
+        // daripada diam-diam berperilaku salah.
+        e.target.checked = false;
+        ui.fail('Infinite Terrain belum didukung di mode VoxelRT. Pindah ke Rasterisasi dulu.');
+        setTimeout(() => ui.hideOverlay(), 2000);
+        return;
+      }
+
+      infiniteTerrainEnabled = e.target.checked;
+      if (infiniteTerrainEnabled) {
+        // Bersihkan dunia benchmark tetap yang sedang ter-load (jika ada)
+        // sebelum masuk mode streaming -- keduanya tidak boleh aktif bersamaan
+        // karena sama-sama memutuskan sendiri chunk mana yang "harus ada".
+        while (chunkEntities.length > 0) destroyChunkEntity(world, chunkEntities.pop());
+        chunkEidMap.clear();
+        engine.chunks.clear();
+
+        chunkStreamer = new ChunkStreamer(DEFAULT_VIEW_DISTANCE);
+        ui.setStatus(`Infinite Terrain aktif — radius ${DEFAULT_VIEW_DISTANCE} chunk di sekitar pemain.`, 1);
+        setTimeout(() => ui.hideOverlay(), 600);
+        ui.showHUD();
+      } else {
+        chunkStreamer = null;
+        // Kembali ke mode benchmark tetap dengan konfigurasi yang sedang dipilih di UI.
+        const storageType = document.getElementById('storage-select').value;
+        const terrainType = document.getElementById('terrain-select').value;
+        buildWorld(storageType, terrainType, currentRenderMode);
+      }
+    });
+  }
+
   document.getElementById('rebuild-btn').addEventListener('click', () => {
+    // "Mulai Benchmark" selalu berarti dunia tetap (grid WORLD_CHUNKS) --
+    // matikan mode streaming dulu kalau sedang aktif supaya keduanya tidak
+    // berebut memutuskan chunk mana yang harus ada.
+    if (infiniteTerrainEnabled) {
+      infiniteTerrainEnabled = false;
+      chunkStreamer = null;
+      if (infiniteTerrainToggle) infiniteTerrainToggle.checked = false;
+    }
+
     const storageType = document.getElementById('storage-select').value;
     const terrainType = document.getElementById('terrain-select').value;
     
@@ -235,6 +322,15 @@ async function main() {
         `Mode VoxelRT hanya mendukung storage 'brickmap'. ` + `Storage '${storageType}' tidak punya serialize().`
       );
       return;
+    }
+
+    // Sama seperti guard di toggle Infinite Terrain: kombinasi streaming +
+    // VoxelRT belum didukung (di luar scope A.1) -- matikan streaming dulu
+    // kalau pemain pindah ke raytrace lewat dropdown ini.
+    if (currentRenderMode === 'raytrace' && infiniteTerrainEnabled) {
+      infiniteTerrainEnabled = false;
+      chunkStreamer = null;
+      if (infiniteTerrainToggle) infiniteTerrainToggle.checked = false;
     }
 
     ui.setStatus(`Beralih ke mesin render: ${currentRenderMode}...`, 0);
@@ -430,7 +526,21 @@ async function main() {
       lastTime = now;
 
       movementSystem(dt);
-      
+
+      // Roadmap A.1 -- Chunk Streaming: hitung chunk (cx, cz) pemain saat
+      // ini dan minta ChunkStreamer memutuskan load/unload HANYA kalau
+      // pemain baru saja pindah chunk (streamer.update() return null kalau
+      // masih di chunk yang sama -- lihat komentar di ChunkStreamer.js).
+      if (chunkStreamer) {
+        const pcx = Math.floor(Position.x[player] / CHUNK_SX);
+        const pcz = Math.floor(Position.z[player] / CHUNK_SZ);
+        const delta = chunkStreamer.update(pcx, pcz);
+        if (delta) {
+          for (const [cx, cz] of delta.toLoad) loadStreamedChunk(cx, cz, 'sdf', 'normal');
+          for (const [cx, cz] of delta.toUnload) unloadStreamedChunk(cx, cz);
+        }
+      }
+
       // FASE 5: Remesh Otomatis
       engine.remeshDirtyChunks();
 

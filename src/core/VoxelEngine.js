@@ -165,6 +165,30 @@ export class VoxelEngine {
     return chunk;
   }
 
+  /**
+   * Unload sebuah chunk (Roadmap A.1): hapus dari `this.chunks` sehingga
+   * tidak lagi ikut ter-remesh/ter-render, TANPA menyentuh storage permanen
+   * apapun. Emit 'chunkUnloaded' SEBELUM entry-nya dihapus dari map supaya
+   * listener (mis. ECS di main.js untuk dispose GPU buffer, atau nanti
+   * Fase A.3 untuk serialize `everEdited` chunk ke IndexedDB sebelum
+   * datanya hilang) masih bisa membaca chunk.storage/chunk.mesh.
+   *
+   * Tidak melempar error kalau chunk tidak ada -- unload dari chunk yang
+   * sudah tidak ter-load (atau tidak pernah ada) adalah no-op yang aman,
+   * supaya caller (ChunkStreamer) tidak perlu cek existence dulu.
+   *
+   * @returns {object|null} chunk record yang baru saja di-unload, atau null.
+   */
+  unloadChunk(cx, cy, cz) {
+    const key = this._chunkKey(cx, cy, cz);
+    const chunk = this.chunks.get(key);
+    if (!chunk) return null;
+
+    this.emit('chunkUnloaded', chunk);
+    this.chunks.delete(key);
+    return chunk;
+  }
+
   // --- ENGINE API ----------------------------------------------------------
 
   getVoxel(x, y, z) {
