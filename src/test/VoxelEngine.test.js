@@ -2,6 +2,8 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { VoxelEngine } from '../core/VoxelEngine.js';
 import { PluginRegistry } from '../core/registry/PluginRegistry.js';
+import { SurfaceNetsMesher } from '../core/mesher/SurfaceNetsMesher.js';
+import { SDFStorage } from '../core/voxel/SDFStorage.js';
 
 // Minimal fake storage: a flat Map keyed by "x,y,z", good enough to test
 // VoxelEngine's chunk/coordinate logic without depending on a real backend.
@@ -291,5 +293,127 @@ describe('VoxelEngine — unloadChunk (Roadmap A.1)', () => {
 
     assert.notEqual(recreated, original);
     assert.equal(recreated.storage.get(1, 1, 1), 0);
+  });
+});
+
+// Roadmap A.4 -- Border Stitching untuk Chunk yang Load Asinkron (dipakai
+// oleh streaming A.1, karena di sana chunk load bertahap antar frame, beda
+// dengan buildWorld() yang membuat semua chunk sekaligus sebelum mesh
+// pertama kali dijalankan).
+describe('VoxelEngine — markChunkLoaded / border stitching (Roadmap A.4)', () => {
+  test('menandai dirty tepat 26 tetangga (6 face + 12 edge + 8 corner) yang sudah ada, bukan chunk itu sendiri', () => {
+    const engine = makeEngine();
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dz = -1; dz <= 1; dz++) engine.getOrCreateChunk(dx, dy, dz);
+      }
+    }
+    // getOrCreateChunk() mulai dengan dirty=true -- reset dulu supaya efek
+    // markChunkLoaded() di bawah bisa diukur secara terisolasi.
+    for (const chunk of engine.chunks.values()) chunk.dirty = false;
+    engine.mesherPlugin.markCalls.length = 0;
+
+    engine.markChunkLoaded(0, 0, 0);
+
+    let dirtyNeighborCount = 0;
+    for (const [key, chunk] of engine.chunks) {
+      if (key === '0,0,0') {
+        assert.equal(chunk.dirty, false, 'chunk itu sendiri tidak boleh ikut ditandai dirty oleh markChunkLoaded()');
+      } else if (chunk.dirty) {
+        dirtyNeighborCount++;
+      }
+    }
+    assert.equal(dirtyNeighborCount, 26);
+    assert.equal(engine.mesherPlugin.markCalls.length, 26);
+  });
+
+  test('mengabaikan tetangga yang belum pernah dibuat -- tidak throw, tidak auto-create chunk baru', () => {
+    const engine = makeEngine();
+    engine.getOrCreateChunk(5, 5, 5); // sendirian, tanpa tetangga
+    const sizeBefore = engine.chunks.size;
+    assert.doesNotThrow(() => engine.markChunkLoaded(5, 5, 5));
+    assert.equal(engine.chunks.size, sizeBefore);
+  });
+
+  function makeSurfaceNetsEngine(size) {
+    const registry = new PluginRegistry();
+    registry.registerStorage('sdf', (sx, sy, sz) => new SDFStorage(sx, sy, sz));
+    registry.registerMesher('surfacenets', () => new SurfaceNetsMesher());
+    return new VoxelEngine({ registry, storage: 'sdf', mesher: 'surfacenets', chunkSize: [size, size, size] });
+  }
+
+  // Medan miring sederhana (sama seperti makeSlopeChunk di
+  // SurfaceNetsMesher.test.js) supaya permukaannya melintasi batas chunk
+  // dengan sudut berbeda di tiap sisi -- kalau seam TIDAK di-stitch ulang,
+  // jumlah vertex di sisi yang berubah akan tetap sama persis (mesh stale).
+  function fillSlope(storage, chunkX, size) {
+    for (let x = 0; x < size; x++) {
+      for (let y = 0; y < size; y++) {
+        for (let z = 0; z < size; z++) {
+          const wx = chunkX * size + x;
+          const h = wx * 0.3 + 3;
+          storage.setSDF(x, y, z, y - h);
+        }
+      }
+    }
+  }
+
+  test('acceptance test A.4: chunk A yang sudah di-mesh sendirian ikut ter-update setelah tetangga B baru di-load', () => {
+    const size = 8;
+    const engine = makeSurfaceNetsEngine(size);
+
+    // 1. Chunk A (cx=0) di-load & di-mesh SENDIRIAN dulu -- pada titik ini
+    //    tetangganya (cx=1) belum pernah dibuat sama sekali, persis seperti
+    //    chunk di tepi radius streaming sebelum pemain bergerak lebih jauh.
+    const chunkA = engine.getOrCreateChunk(0, 0, 0);
+    fillSlope(chunkA.storage, 0, size);
+    chunkA.dirty = true;
+    engine.remeshDirtyChunks();
+    const vertexCountBefore = engine.getChunk(0, 0, 0).mesh.vertexData.length;
+    assert.ok(vertexCountBefore > 0, 'chunk A seharusnya menghasilkan geometri (medan miring melintasi chunk)');
+
+    // 2. Chunk B (cx=1) baru saja di-load (mis. pemain jalan lebih jauh).
+    const chunkB = engine.getOrCreateChunk(1, 0, 0);
+    fillSlope(chunkB.storage, 1, size);
+    chunkB.dirty = true;
+    engine.markChunkLoaded(1, 0, 0);
+
+    assert.equal(
+      engine.getChunk(0, 0, 0).dirty,
+      true,
+      'chunk A harus ikut ditandai dirty setelah B di-load (border stitching A.4) -- tanpa ini mesh A tetap stale'
+    );
+
+    // 3. Setelah remesh, mesh A harus berubah (dibangun ulang dengan data B
+    //    yang sekarang nyata ada, bukan lagi asumsi "kosong" lama).
+    engine.remeshDirtyChunks();
+    const vertexCountAfter = engine.getChunk(0, 0, 0).mesh.vertexData.length;
+    assert.notEqual(
+      vertexCountAfter,
+      vertexCountBefore,
+      'mesh A harus berubah setelah remesh dengan data tetangga B (regression: chunk A tetap stale di seam)'
+    );
+  });
+
+  test('demonstrasi bug yang diperbaiki A.4: TANPA markChunkLoaded, chunk A tetap dianggap bersih (mesh stale)', () => {
+    const size = 8;
+    const engine = makeSurfaceNetsEngine(size);
+
+    const chunkA = engine.getOrCreateChunk(0, 0, 0);
+    fillSlope(chunkA.storage, 0, size);
+    chunkA.dirty = true;
+    engine.remeshDirtyChunks();
+
+    // Load B TANPA memanggil engine.markChunkLoaded() -- simulasi kode
+    // sebelum fix A.4 diterapkan.
+    const chunkB = engine.getOrCreateChunk(1, 0, 0);
+    fillSlope(chunkB.storage, 1, size);
+    chunkB.dirty = true;
+
+    assert.equal(
+      engine.getChunk(0, 0, 0).dirty,
+      false,
+      'tanpa border stitching, chunk A tidak pernah ditandai dirty walau tetangganya baru saja punya data nyata'
+    );
   });
 });

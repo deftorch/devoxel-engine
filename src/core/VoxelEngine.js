@@ -262,6 +262,46 @@ export class VoxelEngine {
   }
 
   /**
+   * Roadmap A.4 -- Border stitching untuk chunk yang baru "muncul" (dari
+   * generation ataupun nanti dari IndexedDB di A.3), dipakai oleh streaming
+   * (A.1) karena chunk di sana di-load bertahap antar frame, bukan sekaligus
+   * seperti dunia tetap (buildWorld() membuat semua chunk dulu, baru mesh
+   * semuanya sekali jalan -- jadi tidak kena masalah ini).
+   *
+   * Skenario: chunk A sudah di-mesh dengan asumsi tetangganya B belum ada
+   * (padding disampel sebagai kosong/default oleh mesher). Beberapa frame
+   * kemudian B benar-benar di-load (mis. pemain jalan lebih jauh sehingga B
+   * masuk radius). Mesh A yang lama sekarang stale terhadap data B yang
+   * nyata ada -- geometri di seam antara A dan B jadi tidak sinkron
+   * (robekan/flap), persis pola bug yang sama dengan yang diperbaiki di
+   * _dirtyBoundaryNeighbors(), tapi dipicu oleh CHUNK BARU, bukan EDIT VOXEL.
+   *
+   * Panggil method ini SETELAH storage chunk (cx, cy, cz) benar-benar terisi
+   * data asli (bukan cuma getOrCreateChunk() yang membuat storage kosong).
+   * Semua 26 kemungkinan tetangga (6 face + 12 edge + 8 corner) yang SUDAH
+   * ADA ditandai dirty -- konservatif secara sengaja (bukan cuma 6 face),
+   * karena chunk baru ini mengubah SELURUH sisi batasnya sekaligus (beda
+   * dengan _dirtyBoundaryNeighbors() yang cuma perlu tandai tetangga di sisi
+   * voxel yang diedit), dan SurfaceNetsMesher._getSDF() bisa butuh kombinasi
+   * sumbu sekaligus untuk sample dekat sudut chunk.
+   */
+  markChunkLoaded(cx, cy, cz) {
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          if (dx === 0 && dy === 0 && dz === 0) continue; // chunk itu sendiri, bukan tetangga
+          const neighbor = this.getChunk(cx + dx, cy + dy, cz + dz);
+          if (!neighbor) continue; // belum pernah dibuat -> tidak ada mesh stale untuk diperbaiki
+          neighbor.dirty = true;
+          if (this.mesherPlugin) {
+            this.mesherPlugin.markChunkDirty(cx + dx, cy + dy, cz + dz);
+          }
+        }
+      }
+    }
+  }
+
+  /**
    * Rebuild the mesh for a single chunk using the active VoxelMesher.
    * Returns the generated mesh data (or null if there's nothing to build).
    */

@@ -72,11 +72,18 @@ async function main() {
    * sengaja memakai jalur yang SAMA dengan buildWorld() (getOrCreateChunk +
    * generateChunkVoxels + dirty=true) supaya listener 'chunkCreated' dan
    * remeshDirtyChunks() di render loop menanganinya tanpa kode duplikat.
+   *
+   * Roadmap A.4: setelah storage chunk ini benar-benar terisi, panggil
+   * engine.markChunkLoaded() supaya tetangga yang SUDAH ADA (di-mesh di
+   * frame-frame sebelumnya dengan asumsi sisi ini belum ada) ikut ditandai
+   * dirty -- tanpa ini, mesh tetangga lama jadi stale/robek begitu chunk
+   * baru muncul di seam-nya. Lihat komentar di VoxelEngine.markChunkLoaded().
    */
   function loadStreamedChunk(cx, cz, storageType, terrainType) {
     const chunk = engine.getOrCreateChunk(cx, 0, cz);
     chunk.storage = generateChunkVoxels(cx, cz, storageType, terrainType);
     chunk.dirty = true;
+    engine.markChunkLoaded(cx, 0, cz);
   }
 
   /**
