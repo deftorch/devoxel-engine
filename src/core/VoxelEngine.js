@@ -188,6 +188,53 @@ export class VoxelEngine {
     if (this.mesherPlugin) {
       this.mesherPlugin.markChunkDirty(cx, cy, cz);
     }
+
+    // Root cause fix (lihat commit 541858b): SurfaceNetsMesher membaca 1 sel
+    // padding dari chunk TETANGGA (termasuk diagonal/corner, karena
+    // _getSDF() bisa butuh nx/ny/nz != 0 di semua sumbu sekaligus) untuk
+    // stitching seam. Kalau voxel yang diedit ada di/dekat batas chunk
+    // (lx/ly/lz == 0 atau == dims-1), mesh chunk tetangga yang SUDAH
+    // dibangun sebelumnya jadi stale -- dia tidak tahu data sumbernya
+    // berubah karena tidak ikut ditandai dirty. Ini yang menyebabkan
+    // robekan/flap mengambang di seam saat menggali dekat batas chunk.
+    // Fix: tandai juga semua chunk tetangga (termasuk diagonal) yang
+    // datanya ikut disampling oleh cell padding di sisi voxel yang diedit.
+    this._dirtyBoundaryNeighbors(cx, cy, cz, lx, ly, lz);
+  }
+
+  /**
+   * Menandai dirty semua chunk tetangga (termasuk diagonal/corner) yang
+   * mesh-nya bergantung pada voxel di (lx, ly, lz) dalam chunk (cx, cy, cz).
+   * SurfaceNetsMesher membaca padding 1 sel dari tetangga di sisi manapun
+   * voxel itu berada tepat di tepi (lx/ly/lz == 0 atau == dims-1), dan bisa
+   * butuh kombinasi sumbu sekaligus (edge/corner neighbor), bukan cuma 6
+   * face neighbor. Chunk yang belum pernah dibuat (belum ada di this.chunks)
+   * otomatis diabaikan -- tidak perlu di-dirty-kan karena belum punya mesh.
+   */
+  _dirtyBoundaryNeighbors(cx, cy, cz, lx, ly, lz) {
+    const [sx, sy, sz] = this.chunkSize;
+
+    // Untuk tiap sumbu, tentukan offset tetangga mana saja yang relevan:
+    // - jika voxel di sisi bawah (local == 0) -> tetangga di dx/dy/dz = -1
+    // - jika voxel di sisi atas (local == dim-1) -> tetangga di dx/dy/dz = +1
+    // - selain itu -> tidak menyentuh tetangga di sumbu itu (offset 0 saja)
+    const dxOptions = lx === 0 ? [-1, 0] : lx === sx - 1 ? [0, 1] : [0];
+    const dyOptions = ly === 0 ? [-1, 0] : ly === sy - 1 ? [0, 1] : [0];
+    const dzOptions = lz === 0 ? [-1, 0] : lz === sz - 1 ? [0, 1] : [0];
+
+    for (const dx of dxOptions) {
+      for (const dy of dyOptions) {
+        for (const dz of dzOptions) {
+          if (dx === 0 && dy === 0 && dz === 0) continue; // chunk asal, sudah dirty
+          const neighbor = this.getChunk(cx + dx, cy + dy, cz + dz);
+          if (!neighbor) continue; // belum pernah dibuat -> tidak ada mesh stale untuk diperbaiki
+          neighbor.dirty = true;
+          if (this.mesherPlugin) {
+            this.mesherPlugin.markChunkDirty(cx + dx, cy + dy, cz + dz);
+          }
+        }
+      }
+    }
   }
 
   /**
