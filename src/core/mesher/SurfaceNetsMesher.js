@@ -47,16 +47,58 @@ export class SurfaceNetsMesher extends VoxelMesher {
   }
 
   /**
-   * Helper untuk menghitung normal dengan gradien (turunan parsial)
+   * Helper untuk sampling SDF di koordinat PECAHAN (fractional) memakai
+   * trilinear interpolation dari 8 titik grid terdekat.
+   *
+   * PENTING: _getSDF() hanya valid untuk koordinat integer karena ujungnya
+   * mengindeks TypedArray (mis. Float32Array). Mengindeks TypedArray dengan
+   * angka pecahan di JavaScript diam-diam mengembalikan `undefined`, bukan
+   * error/exception, sehingga bug ini tidak pernah terlihat lewat crash —
+   * cuma menghasilkan NaN yang menjalar ke normal & shading.
+   */
+  _getSDFTrilinear(storage, ctx, fx, fy, fz, dims) {
+    const x0 = Math.floor(fx), y0 = Math.floor(fy), z0 = Math.floor(fz);
+    const tx = fx - x0, ty = fy - y0, tz = fz - z0;
+
+    const c000 = this._getSDF(storage, ctx, x0, y0, z0, dims);
+    const c100 = this._getSDF(storage, ctx, x0 + 1, y0, z0, dims);
+    const c010 = this._getSDF(storage, ctx, x0, y0 + 1, z0, dims);
+    const c110 = this._getSDF(storage, ctx, x0 + 1, y0 + 1, z0, dims);
+    const c001 = this._getSDF(storage, ctx, x0, y0, z0 + 1, dims);
+    const c101 = this._getSDF(storage, ctx, x0 + 1, y0, z0 + 1, dims);
+    const c011 = this._getSDF(storage, ctx, x0, y0 + 1, z0 + 1, dims);
+    const c111 = this._getSDF(storage, ctx, x0 + 1, y0 + 1, z0 + 1, dims);
+
+    const c00 = c000 * (1 - tx) + c100 * tx;
+    const c10 = c010 * (1 - tx) + c110 * tx;
+    const c01 = c001 * (1 - tx) + c101 * tx;
+    const c11 = c011 * (1 - tx) + c111 * tx;
+
+    const c0 = c00 * (1 - ty) + c10 * ty;
+    const c1 = c01 * (1 - ty) + c11 * ty;
+
+    return c0 * (1 - tz) + c1 * tz;
+  }
+
+  /**
+   * Helper untuk menghitung normal dengan gradien (turunan parsial).
+   * x, y, z di sini boleh berupa koordinat PECAHAN (posisi vertex hasil
+   * interpolasi edge), makanya wajib pakai _getSDFTrilinear, bukan _getSDF.
    */
   _getNormal(storage, ctx, x, y, z, dims) {
-    const d = 1; // Jarak sampling
-    const nx = this._getSDF(storage, ctx, x + d, y, z, dims) - this._getSDF(storage, ctx, x - d, y, z, dims);
-    const ny = this._getSDF(storage, ctx, x, y + d, z, dims) - this._getSDF(storage, ctx, x, y - d, z, dims);
-    const nz = this._getSDF(storage, ctx, x, y, z + d, dims) - this._getSDF(storage, ctx, x, y, z - d, dims);
-    
+    const d = 0.5; // Jarak sampling (setengah sel, cocok untuk sampler trilinear)
+    const nx =
+      this._getSDFTrilinear(storage, ctx, x + d, y, z, dims) -
+      this._getSDFTrilinear(storage, ctx, x - d, y, z, dims);
+    const ny =
+      this._getSDFTrilinear(storage, ctx, x, y + d, z, dims) -
+      this._getSDFTrilinear(storage, ctx, x, y - d, z, dims);
+    const nz =
+      this._getSDFTrilinear(storage, ctx, x, y, z + d, dims) -
+      this._getSDFTrilinear(storage, ctx, x, y, z - d, dims);
+
     const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-    if (len === 0) return [0, 1, 0];
+    if (!Number.isFinite(len) || len === 0) return [0, 1, 0];
     return [nx / len, ny / len, nz / len];
   }
 
@@ -78,9 +120,19 @@ export class SurfaceNetsMesher extends VoxelMesher {
     const getCellKey = (x, y, z) => `${x},${y},${z}`;
 
     // Pass 1: Identifikasi permukaan dan hitung posisi vertex tiap cell
-    for (let z = 0; z < dims[2]; z++) {
-      for (let y = 0; y < dims[1]; y++) {
-        for (let x = 0; x < dims[0]; x++) {
+    //
+    // Loop di sini SENGAJA dimulai dari -1 (bukan 0), memberi "padding" 1 sel
+    // ke arah negatif. Alasannya: Pass 2 (stitching) butuh vertex dari cell
+    // (x-1,y,z), (x,y-1,z), dst untuk menjahit quad di tepi chunk (x=0/y=0/z=0).
+    // Sebelumnya cell -1 tidak pernah dihitung, jadi lookup-nya selalu
+    // `undefined` dan quad di baris/kolom pertama tiap sumbu dilewati begitu
+    // saja -> muncul celah/retakan mengikuti garis batas chunk. Cell padding
+    // ini disampling dari data tetangga lewat ctx.getNeighbor (SDF-nya sama
+    // persis dengan yang dipakai neighbor chunk itu sendiri), jadi posisinya
+    // konsisten dan tidak menimbulkan seam baru.
+    for (let z = -1; z < dims[2]; z++) {
+      for (let y = -1; y < dims[1]; y++) {
+        for (let x = -1; x < dims[0]; x++) {
           
           let mask = 0;
           const cornerSDF = [];
