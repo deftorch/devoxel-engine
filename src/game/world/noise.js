@@ -61,6 +61,20 @@ export function hash3(x, y, z) {
   return (n >>> 0) / 4294967295;
 }
 
+export function fbm3D(x, y, z, octaves = 3, lacunarity = 2.0, gain = 0.5) {
+  let sum = 0;
+  let amp = 1;
+  let freq = 1;
+  let maxAmp = 0;
+  for (let i = 0; i < octaves; i++) {
+    sum += valueNoise3D(x * freq, y * freq, z * freq) * amp;
+    maxAmp += amp;
+    amp *= gain;
+    freq *= lacunarity;
+  }
+  return sum / maxAmp; // ternormalisasi ke rentang ~[0,1]
+}
+
 export function valueNoise3D(x, y, z) {
   const x0 = Math.floor(x), y0 = Math.floor(y), z0 = Math.floor(z);
   const x1 = x0 + 1, y1 = y0 + 1, z1 = z0 + 1;

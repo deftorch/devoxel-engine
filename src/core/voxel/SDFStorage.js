@@ -50,4 +50,44 @@ export class SDFStorage extends VoxelStorage {
     if (x < 0 || x >= this.dims[0] || y < 0 || y >= this.dims[1] || z < 0 || z >= this.dims[2]) return;
     this.sdf[x + y * this.dims[0] + z * this.dims[0] * this.dims[1]] = val;
   }
+
+  /**
+   * Safety-net smoothing pass: box blur 3x3x3 ringan (1 pass) pada seluruh
+   * field SDF untuk "menutup" sliver/celah setipis 1 voxel yang mungkin
+   * lolos dari tuning noise (lihat CAVE_START_DEPTH/CAVE_FULL_DEPTH di
+   * chunk.js). Blend ringan (bukan full-replace) supaya detail terrain asli
+   * tidak ikut hilang. Catatan: belum menangani smoothing lintas-chunk --
+   * blur di tepi chunk terpotong di batas array lokal (tidak mengambil data
+   * tetangga), jadi masih mungkin ada sedikit sliver tepat di garis chunk.
+   */
+  smoothSDF(strength = 0.15) {
+    const [sx, sy, sz] = this.dims;
+    const src = this.sdf;
+    const dst = new Float32Array(src.length);
+
+    for (let z = 0; z < sz; z++) {
+      for (let y = 0; y < sy; y++) {
+        for (let x = 0; x < sx; x++) {
+          const idx = x + y * sx + z * sx * sy;
+          let sum = 0,
+            count = 0;
+          for (let dz = -1; dz <= 1; dz++) {
+            for (let dy = -1; dy <= 1; dy++) {
+              for (let dx = -1; dx <= 1; dx++) {
+                const nx = x + dx,
+                  ny = y + dy,
+                  nz = z + dz;
+                if (nx < 0 || nx >= sx || ny < 0 || ny >= sy || nz < 0 || nz >= sz) continue;
+                sum += src[nx + ny * sx + nz * sx * sy];
+                count++;
+              }
+            }
+          }
+          const avg = sum / count;
+          dst[idx] = src[idx] * (1 - strength) + avg * strength;
+        }
+      }
+    }
+    this.sdf = dst;
+  }
 }

@@ -1,6 +1,6 @@
 import { CHUNK_SX, CHUNK_SY, CHUNK_SZ } from '../../core/config.js';
 import { BLOCK_IDS } from '../../data/blocks.js';
-import { heightAt, heightRaw, valueNoise3D } from './noise.js';
+import { heightAt, heightRaw, fbm3D } from './noise.js';
 import { FlatGridStorage } from '../../core/voxel/FlatGridStorage.js';
 import { OctreeStorage } from '../../core/voxel/OctreeStorage.js';
 import { BrickMapStorage } from '../../core/voxel/BrickMapStorage.js';
@@ -26,10 +26,31 @@ export function generateChunkVoxels(chunkX, chunkZ, storageType = 'flat', terrai
         for (let y = 0; y < CHUNK_SY; y++) {
           // SDF base: jarak dari ketinggian permukaan. <0 artinya di dalam tanah.
           let dist = y - h;
-          // Tambahkan variasi noise 3D (gua/overhang)
-          const noise = valueNoise3D(wx * 0.1, y * 0.1, wz * 0.1) * 8.0 - 4.0;
-          dist += noise;
-          
+
+          // Seberapa jauh voxel ini dari permukaan (0 = tepat di permukaan,
+          // makin besar makin jauh -- baik di bawah maupun di atas h, supaya
+          // overhang juga tertangani). Noise gua HANYA diaktifkan setelah
+          // jarak tertentu, dan di-fade in secara bertahap -- bukan on/off
+          // tiba-tiba -- supaya tidak ada celah tipis tepat di kulit
+          // permukaan yang bikin terrain terlihat "robek".
+          const distFromSurface = Math.abs(y - h);
+          const CAVE_START_DEPTH = 3.0; // mulai fade in noise gua
+          const CAVE_FULL_DEPTH = 6.0; // noise gua full strength
+
+          const caveFadeLinear = Math.max(
+            0,
+            Math.min(1, (distFromSurface - CAVE_START_DEPTH) / (CAVE_FULL_DEPTH - CAVE_START_DEPTH))
+          );
+          // Smoothstep supaya transisi lebih halus daripada fade linear.
+          const caveFade = caveFadeLinear * caveFadeLinear * (3 - 2 * caveFadeLinear);
+
+          if (caveFade > 0) {
+            // FBM 3D (multi-oktaf) supaya bentuk gua/overhang organik,
+            // bukan pita-pita tajam acak seperti noise 1-oktaf.
+            const noise = fbm3D(wx * 0.08, y * 0.08, wz * 0.08, 3) * 8.0 - 4.0;
+            dist += noise * caveFade;
+          }
+
           storage.setSDF(x, y, z, dist);
         }
       } else if (terrainType === 'normal') {
@@ -105,6 +126,14 @@ export function generateChunkVoxels(chunkX, chunkZ, storageType = 'flat', terrai
   // if (typeof storage.buildSDF === 'function') {
   //   storage.buildSDF();
   // }
+
+  // Safety net: smoothing pass ringan pada SDF untuk menutup sliver/celah
+  // setipis 1 voxel yang mungkin lolos dari tuning noise di atas (lihat
+  // §2.3 rencana perbaikan robekan terrain). 1 pass, blend ringan supaya
+  // detail terrain asli tidak ikut hilang.
+  if (storageType === 'sdf' && terrainType === 'normal' && typeof storage.smoothSDF === 'function') {
+    storage.smoothSDF(0.15);
+  }
 
   return storage;
 }
