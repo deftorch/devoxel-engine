@@ -449,7 +449,7 @@ async function main() {
       };
 
       const chunkEids = query(world, [Renderable, ChunkCoord, RenderMesh]);
-      renderer.draw(cameraState, chunkEids, Renderable, RenderMesh);
+      renderer.draw(cameraState, chunkEids, Renderable, RenderMesh, ChunkCoord, [CHUNK_SX, CHUNK_SY, CHUNK_SZ]);
 
       ui.updateHUD(
         fpsDisplay,

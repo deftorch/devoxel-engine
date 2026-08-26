@@ -93,7 +93,7 @@ async function initBackground() {
         
         const chunkEidsQuery = query(world, [Renderable, ChunkCoord, RenderMesh]);
         if (chunkEidsQuery.length > 0) {
-            renderer.draw(cameraState, chunkEidsQuery, Renderable, RenderMesh);
+            renderer.draw(cameraState, chunkEidsQuery, Renderable, RenderMesh, ChunkCoord, engine.chunkSize);
         }
         
         requestAnimationFrame(frame);

@@ -1,5 +1,5 @@
 import { VERTEX_SHADER, FRAGMENT_SHADER } from './shader.glsl.js';
-import { mat4Perspective, mat4LookAt, mat4Multiply, vAdd } from '../../utils/math.js';
+import { mat4Perspective, mat4LookAt, mat4Multiply, vAdd, computeFrustumPlanes, aabbOutsideFrustum } from '../../utils/math.js';
 
 export async function initWebGL(canvas) {
   const gl = canvas.getContext('webgl2');
@@ -78,6 +78,10 @@ export async function initWebGL(canvas) {
   
   let activeDebugDraws = [];
 
+  // Statistik frustum culling (Optimisasi B.1), lihat webgpu/engine.js.
+  let lastDrawnChunks = 0;
+  let lastCulledChunks = 0;
+
   function getDebugBufferGL(data) {
     const vao = gl.createVertexArray();
     gl.bindVertexArray(vao);
@@ -131,7 +135,7 @@ export async function initWebGL(canvas) {
       };
     },
 
-    draw(cameraState, chunkEids, Renderable, RenderMesh) {
+    draw(cameraState, chunkEids, Renderable, RenderMesh, ChunkCoord, chunkSize) {
       gl.clearColor(0.53, 0.72, 0.86, 1.0);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
@@ -148,11 +152,32 @@ export async function initWebGL(canvas) {
       gl.uniform3fv(uCameraPos, eye);
       gl.uniform1f(uFogDensity, 0.006);
 
+      // Frustum culling (Optimisasi B.1) -- lihat catatan yang sama di
+      // webgpu/engine.js. Backward compatible: tanpa ChunkCoord/chunkSize,
+      // semua chunk tetap digambar seperti sebelumnya.
+      const frustumPlanes = ChunkCoord && chunkSize ? computeFrustumPlanes(viewProj) : null;
+      const [csx, csy, csz] = chunkSize || [0, 0, 0];
+
+      lastDrawnChunks = 0;
+      lastCulledChunks = 0;
       for (const eid of chunkEids) {
         const mesh = RenderMesh.meshes[eid];
         if (!mesh) continue;
+
+        if (frustumPlanes) {
+          const cx = ChunkCoord.cx[eid];
+          const cz = ChunkCoord.cz[eid];
+          const min = [cx * csx, 0, cz * csz];
+          const max = [cx * csx + csx, csy, cz * csz + csz];
+          if (aabbOutsideFrustum(frustumPlanes, min, max)) {
+            lastCulledChunks++;
+            continue;
+          }
+        }
+
         gl.bindVertexArray(mesh.vao);
         gl.drawElements(gl.TRIANGLES, Renderable.indexCount[eid], gl.UNSIGNED_INT, 0);
+        lastDrawnChunks++;
       }
       gl.bindVertexArray(null);
 
@@ -195,6 +220,11 @@ export async function initWebGL(canvas) {
           activeDebugDraws.push({ ...buf, topology: gl.TRIANGLES, depthTest: triObj.depthTest !== false });
         }
       }
+    },
+
+    // Statistik frustum culling frame terakhir (Optimisasi B.1).
+    getCullingStats() {
+      return { drawn: lastDrawnChunks, culled: lastCulledChunks };
     },
 
     // Mengekspos raw gl untuk kebutuhan eksternal

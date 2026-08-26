@@ -1,5 +1,5 @@
 import { SHADER } from './shader.wgsl.js';
-import { mat4Perspective, mat4LookAt, mat4Multiply, vAdd } from '../../utils/math.js';
+import { mat4Perspective, mat4LookAt, mat4Multiply, vAdd, computeFrustumPlanes, aabbOutsideFrustum } from '../../utils/math.js';
 
 const LINE_SHADER = /* wgsl */ `
 struct LU { viewProj : mat4x4<f32> };
@@ -89,6 +89,11 @@ export async function initWebGPU(canvas) {
 
   const uniformArray = new Float32Array(20);
 
+  // Statistik frustum culling (Optimisasi B.1) -- diperbarui tiap draw(),
+  // dibaca opsional oleh HUD/debug overlay lewat getCullingStats().
+  let lastDrawnChunks = 0;
+  let lastCulledChunks = 0;
+
   // --- Debug Primitives Pipelines (Fase 2) ---
   const lineModule = device.createShaderModule({ code: LINE_SHADER });
   const debugUniformBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -174,7 +179,7 @@ export async function initWebGPU(canvas) {
       };
     },
 
-    draw(cameraState, chunkEids, Renderable, RenderMesh) {
+    draw(cameraState, chunkEids, Renderable, RenderMesh, ChunkCoord, chunkSize) {
       ensureRenderTargets();
 
       const aspect = canvas.width / canvas.height;
@@ -184,6 +189,13 @@ export async function initWebGPU(canvas) {
       const center = vAdd(eye, forward);
       const view = mat4LookAt(eye, center, [0, 1, 0]);
       const viewProj = mat4Multiply(proj, view);
+
+      // Frustum culling (Optimisasi B.1): hitung 6 plane frustum sekali per
+      // frame. Kalau ChunkCoord/chunkSize tidak diberikan (caller lama),
+      // frustumPlanes tetap null dan semua chunk digambar seperti sebelumnya
+      // -- backward compatible, tidak memaksa semua call site berubah.
+      const frustumPlanes = ChunkCoord && chunkSize ? computeFrustumPlanes(viewProj) : null;
+      const [csx, csy, csz] = chunkSize || [0, 0, 0];
 
       uniformArray.set(viewProj, 0);
       uniformArray.set(eye, 16);
@@ -211,12 +223,27 @@ export async function initWebGPU(canvas) {
       pass.setPipeline(pipeline);
       pass.setBindGroup(0, bindGroup);
 
+      lastDrawnChunks = 0;
+      lastCulledChunks = 0;
       for (const eid of chunkEids) {
         const mesh = RenderMesh.meshes[eid];
         if (!mesh) continue;
+
+        if (frustumPlanes) {
+          const cx = ChunkCoord.cx[eid];
+          const cz = ChunkCoord.cz[eid];
+          const min = [cx * csx, 0, cz * csz];
+          const max = [cx * csx + csx, csy, cz * csz + csz];
+          if (aabbOutsideFrustum(frustumPlanes, min, max)) {
+            lastCulledChunks++;
+            continue;
+          }
+        }
+
         pass.setVertexBuffer(0, mesh.vertexBuffer);
         pass.setIndexBuffer(mesh.indexBuffer, 'uint32');
         pass.drawIndexed(Renderable.indexCount[eid]);
+        lastDrawnChunks++;
       }
 
       // ----------------------------------------------------
@@ -268,6 +295,12 @@ export async function initWebGPU(canvas) {
           });
         }
       }
+    },
+
+    // Statistik frustum culling frame terakhir (Optimisasi B.1) -- dipakai
+    // untuk verifikasi/HUD, bukan bagian dari render loop itu sendiri.
+    getCullingStats() {
+      return { drawn: lastDrawnChunks, culled: lastCulledChunks };
     },
 
     // Mengekspos raw device untuk kebutuhan tool/editor eksternal

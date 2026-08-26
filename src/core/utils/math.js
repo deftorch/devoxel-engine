@@ -188,6 +188,66 @@ export function rayPlaneIntersect(ro, rd, planePoint, planeNormal) {
 }
 
 /**
+ * Extracts the 6 frustum planes (left, right, bottom, top, near, far) from
+ * a combined view*projection matrix, using the standard Gribb/Hartmann
+ * method. Each plane is returned as [a, b, c, d] for the plane equation
+ * a*x + b*y + c*z + d = 0, normalized so that (a,b,c) has unit length and
+ * the INSIDE half-space is where a*x + b*y + c*z + d >= 0.
+ *
+ * `m` is a 16-element COLUMN-MAJOR matrix (matches mat4Multiply/
+ * mat4Perspective/mat4LookAt in this file), so row `i` of the matrix is
+ * read as [m[i], m[i+4], m[i+8], m[i+12]].
+ *
+ * @param {Float32Array} m - combined view*projection matrix (column-major)
+ * @returns {number[][]} array of 6 planes, each [a, b, c, d]
+ */
+export function computeFrustumPlanes(m) {
+  const row = (i) => [m[i], m[i + 4], m[i + 8], m[i + 12]];
+  const r0 = row(0), r1 = row(1), r2 = row(2), r3 = row(3);
+  const addP = (a) => [r3[0] + a[0], r3[1] + a[1], r3[2] + a[2], r3[3] + a[3]];
+  const subP = (a) => [r3[0] - a[0], r3[1] - a[1], r3[2] - a[2], r3[3] - a[3]];
+
+  const raw = [
+    addP(r0), // left
+    subP(r0), // right
+    addP(r1), // bottom
+    subP(r1), // top
+    addP(r2), // near
+    subP(r2), // far
+  ];
+
+  return raw.map(([a, b, c, d]) => {
+    const len = Math.hypot(a, b, c) || 1;
+    return [a / len, b / len, c / len, d / len];
+  });
+}
+
+/**
+ * Tests whether an axis-aligned bounding box is fully outside any single
+ * frustum plane (a standard, slightly conservative frustum-AABB test: it
+ * can produce false positives -- i.e. treat a box as "inside" when it's
+ * actually just outside a corner -- but never a false negative, so it is
+ * safe to use as a culling pre-filter without popping visible geometry).
+ *
+ * @param {number[][]} planes - output of computeFrustumPlanes()
+ * @param {Vector3} min - AABB min corner (world space)
+ * @param {Vector3} max - AABB max corner (world space)
+ * @returns {boolean} true if the box is definitely outside the frustum
+ */
+export function aabbOutsideFrustum(planes, min, max) {
+  for (const [a, b, c, d] of planes) {
+    // Pick the AABB corner most likely to be *inside* this plane (the
+    // "positive vertex" relative to the plane normal). If even that
+    // corner is outside, the whole box is outside this plane.
+    const px = a >= 0 ? max[0] : min[0];
+    const py = b >= 0 ? max[1] : min[1];
+    const pz = c >= 0 ? max[2] : min[2];
+    if (a * px + b * py + c * pz + d < 0) return true;
+  }
+  return false;
+}
+
+/**
  * Decomposes a 3x3 rotation matrix back into the (rx, ry, rz) Euler
  * angles (in degrees) matching this project's rotationMat3() convention
  * (R = Rz(rz) * Ry(ry) * Rx(rx), row-major, mat3Apply(R,v) = R*v).
