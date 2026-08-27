@@ -49,6 +49,14 @@ export class VoxelEngine {
     // secara visual. Lihat SurfaceNetsMesher + ctx.debugChunkBounds.
     this.debugChunkBounds = false;
 
+    // Roadmap A.5 -- Origin Rebasing: referensi chunk yang dipakai mesher
+    // untuk membakar posisi vertex RELATIF (bukan absolut dari (0,0,0)).
+    // Default [0,0,0] = perilaku lama (posisi absolut) persis, dipakai oleh
+    // SEMUA konsumer engine ini kecuali jalur streaming (main.js) yang
+    // menggesernya lewat setOriginChunk() saat pemain jalan cukup jauh.
+    // Lihat OriginRebase.js untuk penjelasan lengkap kenapa ini diperlukan.
+    this.originChunk = [0, 0, 0];
+
     // Resolve plugins declared by id in the config, if any.
     if (options.storage) this.useStorageProvider(this._resolveStorageFactory(options.storage));
     if (options.mesher) this.useMesher(this._resolveMesher(options.mesher));
@@ -314,6 +322,7 @@ export class VoxelEngine {
       chunkCoord: [cx, cy, cz],
       getNeighbor: (dx, dy, dz) => this.getChunk(cx + dx, cy + dy, cz + dz)?.storage ?? null,
       debugChunkBounds: this.debugChunkBounds,
+      originChunk: this.originChunk,
     };
 
     this.emit('beforeMesh', chunk);
@@ -332,6 +341,25 @@ export class VoxelEngine {
       this.emit('afterMesh', { chunk, meshData: result });
       return result;
     }
+  }
+
+  /**
+   * Roadmap A.5 -- Origin Rebasing: pindahkan referensi origin yang dipakai
+   * mesher untuk membakar posisi vertex (lihat komentar lengkap di
+   * OriginRebase.js dan SurfaceNetsMesher.generateMesh()). Menandai SEMUA
+   * chunk yang sedang loaded sebagai dirty -- persis pola yang sama dengan
+   * setDebugChunkBounds() -- supaya remesh berikutnya membakar ulang posisi
+   * vertex relatif terhadap origin BARU (vertex data yang sudah terlanjur
+   * dibakar relatif ke origin lama tidak valid lagi begitu origin berubah).
+   *
+   * Default this.originChunk = [0,0,0] dan method ini TIDAK PERNAH dipanggil
+   * kecuali oleh jalur streaming (main.js) -- engine untuk editor/benchmark/
+   * landing.js tidak pernah memanggilnya, jadi originChunk-nya tetap [0,0,0]
+   * selamanya dan perilaku baking mesh 100% tidak berubah untuk mereka.
+   */
+  setOriginChunk(ocx, ocy, ocz) {
+    this.originChunk = [ocx, ocy, ocz];
+    for (const chunk of this.chunks.values()) chunk.dirty = true;
   }
 
   /**

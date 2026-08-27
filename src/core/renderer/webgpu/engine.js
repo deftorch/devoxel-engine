@@ -179,7 +179,7 @@ export async function initWebGPU(canvas) {
       };
     },
 
-    draw(cameraState, chunkEids, Renderable, RenderMesh, ChunkCoord, chunkSize) {
+    draw(cameraState, chunkEids, Renderable, RenderMesh, ChunkCoord, chunkSize, originChunk) {
       ensureRenderTargets();
 
       const aspect = canvas.width / canvas.height;
@@ -196,6 +196,14 @@ export async function initWebGPU(canvas) {
       // -- backward compatible, tidak memaksa semua call site berubah.
       const frustumPlanes = ChunkCoord && chunkSize ? computeFrustumPlanes(viewProj) : null;
       const [csx, csy, csz] = chunkSize || [0, 0, 0];
+      // Roadmap A.5 -- Origin Rebasing: AABB tiap chunk untuk culling HARUS
+      // dihitung relatif terhadap originChunk yang SAMA dipakai untuk
+      // membakar vertex mesh (VoxelEngine.originChunk) dan untuk menggeser
+      // `eye` (lihat main.js) -- kalau tidak, frustum (dibangun dari eye
+      // yang sudah digeser) dan AABB (masih absolut) akan berada di ruang
+      // koordinat yang berbeda, menghasilkan culling yang salah begitu
+      // streaming aktif. Default [0,0,0] = perilaku lama persis.
+      const [ox, oy, oz] = originChunk || [0, 0, 0];
 
       uniformArray.set(viewProj, 0);
       uniformArray.set(eye, 16);
@@ -230,10 +238,14 @@ export async function initWebGPU(canvas) {
         if (!mesh) continue;
 
         if (frustumPlanes) {
-          const cx = ChunkCoord.cx[eid];
-          const cz = ChunkCoord.cz[eid];
-          const min = [cx * csx, 0, cz * csz];
-          const max = [cx * csx + csx, csy, cz * csz + csz];
+          // ChunkCoord tidak menyimpan cy (dunia saat ini cuma 1 layer chunk
+          // vertikal, cy selalu implisit 0 -- lihat components.js) -- geser
+          // sumbu Y cukup pakai -oy*csy secara seragam, bukan per-entity.
+          const cx = ChunkCoord.cx[eid] - ox;
+          const cz = ChunkCoord.cz[eid] - oz;
+          const minY = -oy * csy;
+          const min = [cx * csx, minY, cz * csz];
+          const max = [cx * csx + csx, minY + csy, cz * csz + csz];
           if (aabbOutsideFrustum(frustumPlanes, min, max)) {
             lastCulledChunks++;
             continue;

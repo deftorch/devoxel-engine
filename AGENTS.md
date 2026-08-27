@@ -88,10 +88,17 @@ Three roles, three base classes, one registry:
    needs to know concrete plugin types.
 4. Verify with a smoke test (see §8) before considering the task done.
 
-**Known contract limitation (see `NEXT_STEPS.md` §0):** `generateMesh`
-currently only receives a single chunk's storage, with no neighbor-chunk
-access. If your task involves border/seam correctness across chunks, read
-that section before assuming the mesher can already see adjacent chunks.
+**Mesher `ctx` contract:** `generateMesh(chunkStorage, ctx)` receives an
+optional `ctx` object with `chunkCoord` (`[cx,cy,cz]`), `getNeighbor(dx,dy,dz)`
+(returns adjacent chunk's storage or `null` — used for border/seam stitching,
+see the Fase 0 seam fix and Roadmap A.4), `debugChunkBounds`, and
+`originChunk` (`[ox,oy,oz]`, default `[0,0,0]` — Roadmap A.5 Origin Rebasing:
+lets `VoxelEngine.setOriginChunk()` shift where vertex positions are baked
+*relative to*, so Float32 vertex buffers never accumulate the player's full
+absolute distance from spawn; see `core/world/OriginRebase.js`). All fields
+are additive/optional — a mesher that ignores `ctx` entirely, or a caller
+that never sets `originChunk`, keeps the old world-absolute baking behavior
+unchanged.
 
 ---
 

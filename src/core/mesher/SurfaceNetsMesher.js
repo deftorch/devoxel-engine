@@ -140,9 +140,20 @@ export class SurfaceNetsMesher extends VoxelMesher {
     const dims = chunkStorage.dims;
     let offsetX = 0, offsetY = 0, offsetZ = 0;
     if (ctx && ctx.chunkCoord) {
-      offsetX = ctx.chunkCoord[0] * dims[0];
-      offsetY = ctx.chunkCoord[1] * dims[1];
-      offsetZ = ctx.chunkCoord[2] * dims[2];
+      // Roadmap A.5 -- Origin Rebasing: posisi vertex dibakar RELATIF
+      // terhadap ctx.originChunk (default [0,0,0], 100% backward compatible
+      // untuk caller yang tidak menyetelnya -- editor, landing.js, dan mode
+      // benchmark dunia tetap semuanya tetap mendapat posisi absolut persis
+      // seperti sebelumnya). VoxelEngine.setOriginChunk() dipakai jalur
+      // streaming (main.js) untuk menggeser referensi ini secara BERKALA
+      // (bukan tiap frame) supaya angka yang dibakar ke Float32Array vertex
+      // buffer tidak pernah tumbuh sebesar posisi absolut pemain dari
+      // (0,0,0) -- itulah akar masalah jitter/robekan mesh pada jarak jauh
+      // (lihat OriginRebase.js untuk penjelasan lengkap root-cause-nya).
+      const [ox, oy, oz] = ctx.originChunk || [0, 0, 0];
+      offsetX = (ctx.chunkCoord[0] - ox) * dims[0];
+      offsetY = (ctx.chunkCoord[1] - oy) * dims[1];
+      offsetZ = (ctx.chunkCoord[2] - oz) * dims[2];
     }
 
     const vertexData = [];

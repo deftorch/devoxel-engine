@@ -100,4 +100,119 @@ describe('SurfaceNetsMesher', () => {
     );
     assert.ok(nearBoundary(meshB) > 0, 'chunk B should generate vertices right at its shared edge with chunk A');
   });
+
+  // Roadmap A.5 -- Origin Rebasing: ctx.originChunk membakar posisi vertex
+  // RELATIF terhadap sebuah origin, bukan selalu absolut dari (0,0,0).
+  describe('generateMesh — ctx.originChunk (Roadmap A.5)', () => {
+    // Medan LOKAL (tidak bergantung pada chunkCoord) -- beda dengan
+    // makeSlopeChunk() di atas yang sengaja height-nya mengikuti posisi
+    // WORLD (dipakai untuk uji kontinuitas antar chunk). Di sini kita cuma
+    // perlu permukaan yang selalu ada di dalam rentang y lokal (0..size)
+    // berapa pun chunkCoord yang dipakai untuk baking offset, termasuk
+    // chunkCoord yang sangat jauh dari (0,0,0).
+    function makeLocalSlopeChunk(size = CS) {
+      const storage = new SDFStorage(size, size, size);
+      for (let x = 0; x < size; x++) {
+        for (let y = 0; y < size; y++) {
+          for (let z = 0; z < size; z++) {
+            const h = x * 0.3 + size * 0.4;
+            storage.setSDF(x, y, z, y - h);
+          }
+        }
+      }
+      return storage;
+    }
+
+    test('tanpa ctx.originChunk, posisi vertex tetap absolut persis seperti sebelumnya (backward compatible)', () => {
+      const mesher = new SurfaceNetsMesher();
+      const chunk = makeLocalSlopeChunk(CS);
+      const ctx = { chunkCoord: [5, 0, 0], getNeighbor: () => null };
+
+      const mesh = mesher.generateMesh(chunk, ctx);
+      assert.ok(mesh.vertexData.length > 0, 'medan lokal seharusnya menghasilkan geometri');
+      // Vertex x pertama harus berada di sekitar world-absolute x = 5*CS = 40
+      // (toleransi 1 unit untuk sel batas -1 yang disengaja disampel mesher,
+      // lihat test "adjacent chunks" di atas), BUKAN chunk-local (0..CS) --
+      // identik dengan perilaku sebelum A.5.
+      assert.ok(mesh.vertexData[0] >= 5 * CS - 1 && mesh.vertexData[0] < 6 * CS);
+    });
+
+    test('ctx.originChunk menggeser posisi vertex relatif terhadap origin tsb (selisih persis = jarak origin dalam unit dunia)', () => {
+      const mesher = new SurfaceNetsMesher();
+      const chunk = makeLocalSlopeChunk(CS);
+      const ctxAbsolute = { chunkCoord: [5, 0, 0], getNeighbor: () => null };
+      const ctxRelative = { chunkCoord: [5, 0, 0], originChunk: [5, 0, 0], getNeighbor: () => null };
+
+      const meshAbsolute = mesher.generateMesh(chunk, ctxAbsolute);
+      const meshRelative = mesher.generateMesh(chunk, ctxRelative);
+
+      // Origin == chunkCoord -> offset jadi nol -> vertex jadi chunk-local
+      // (sekitar 0..CS, dengan sedikit overshoot negatif dari sel batas -1).
+      const diff = meshAbsolute.vertexData[0] - meshRelative.vertexData[0];
+      assert.ok(Math.abs(diff - 5 * CS) < 1e-4, `selisih offset harus persis 5*CS, dapat ${diff}`);
+      assert.ok(meshRelative.vertexData[0] >= -1 && meshRelative.vertexData[0] < CS + 1);
+    });
+
+    test('originChunk tidak mengubah BENTUK mesh, cuma translasinya (vertex count & index count identik)', () => {
+      const mesher = new SurfaceNetsMesher();
+      const chunk = makeLocalSlopeChunk(CS);
+      const ctxAbsolute = { chunkCoord: [5, 0, 0], getNeighbor: () => null };
+      const ctxRelative = { chunkCoord: [5, 0, 0], originChunk: [2, 0, 0], getNeighbor: () => null };
+
+      const meshAbsolute = mesher.generateMesh(chunk, ctxAbsolute);
+      const meshRelative = mesher.generateMesh(chunk, ctxRelative);
+      assert.equal(meshAbsolute.vertexData.length, meshRelative.vertexData.length);
+      assert.equal(meshAbsolute.indexData.length, meshRelative.indexData.length);
+    });
+
+    test('acceptance test A.5: dengan origin di-rebase, magnitude vertex tetap kecil meski chunk aslinya jauh dari (0,0,0); tanpa rebase, magnitude ikut tumbuh sebesar posisi absolut', () => {
+      const mesher = new SurfaceNetsMesher();
+      const farChunkX = 125000; // >100.000 unit dengan CS=8 -> 1.000.000 unit
+      const chunk = makeLocalSlopeChunk(CS);
+
+      const ctxAbsolute = { chunkCoord: [farChunkX, 0, 0], getNeighbor: () => null };
+      const meshAbsolute = mesher.generateMesh(chunk, ctxAbsolute);
+      assert.ok(meshAbsolute.vertexData.length > 0);
+      assert.ok(
+        Math.abs(meshAbsolute.vertexData[0]) > farChunkX * CS - CS * 2,
+        'tanpa origin rebase, magnitude vertex tumbuh sebesar posisi absolut dunia -- inilah akar masalah presisi float32 yang diperbaiki A.5'
+      );
+
+      const ctxRelative = {
+        chunkCoord: [farChunkX, 0, 0],
+        originChunk: [farChunkX, 0, 0],
+        getNeighbor: () => null,
+      };
+      const meshRelative = mesher.generateMesh(chunk, ctxRelative);
+      const stride = 9; // posisi(3) + normal(3) + warna(3) per vertex, lihat generateMesh()
+      for (let i = 0; i < meshRelative.vertexData.length; i += stride) {
+        assert.ok(
+          Math.abs(meshRelative.vertexData[i]) < CS * 2,
+          `dengan origin di-rebase, magnitude vertex tetap kecil (bounded ke skala chunk) meski chunk aslinya di x=${farChunkX}`
+        );
+      }
+    });
+
+    test('demonstrasi langsung akar masalah presisi float32 pada magnitude besar (independen dari mesher)', () => {
+      // Membuktikan klaim umum yang mendasari fix A.5: menyimpan posisi
+      // ABSOLUT (offset besar + detail sub-unit kecil) ke Float32Array
+      // kehilangan detail kecil itu, sedangkan menyimpan versi RELATIF
+      // (origin sudah dikurangi, jadi kecil) tidak -- persis yang terjadi
+      // saat vertex data di-upload ke GPU vertex buffer (Float32Array).
+      const farOffset = 1_000_000; // >100.000 unit, sesuai acceptance test roadmap
+      const smallDetail = 0.35; // presisi sub-unit yang seharusnya tetap terjaga
+
+      const absoluteStored = new Float32Array([farOffset + smallDetail])[0];
+      const absoluteError = Math.abs(absoluteStored - (farOffset + smallDetail));
+
+      const relativeStored = new Float32Array([smallDetail])[0];
+      const relativeError = Math.abs(relativeStored - smallDetail);
+
+      assert.ok(
+        absoluteError > 1e-3,
+        `pada magnitude besar (${farOffset}), Float32Array kehilangan detail sub-unit (error=${absoluteError})`
+      );
+      assert.ok(relativeError < 1e-6, `versi relatif (origin sudah dikurangi) tetap presisi (error=${relativeError})`);
+    });
+  });
 });

@@ -26,8 +26,13 @@ export class GreedyMesher extends VoxelMesher {
 
     let offsetX = 0, offsetZ = 0;
     if (ctx && ctx.chunkCoord) {
-      offsetX = ctx.chunkCoord[0] * dims[0];
-      offsetZ = ctx.chunkCoord[2] * dims[2];
+      // Roadmap A.5 -- Origin Rebasing: lihat komentar lebih lengkap di
+      // SurfaceNetsMesher.generateMesh(). ctx.originChunk default [0,0,0]
+      // sehingga 100% backward compatible untuk caller yang tidak
+      // menyetelnya (editor, landing.js, mode benchmark dunia tetap).
+      const [ox, , oz] = ctx.originChunk || [0, 0, 0];
+      offsetX = (ctx.chunkCoord[0] - ox) * dims[0];
+      offsetZ = (ctx.chunkCoord[2] - oz) * dims[2];
     }
     
     // Shader saat ini belum memiliki instance/model matrix per-chunk, 

@@ -417,3 +417,40 @@ describe('VoxelEngine — markChunkLoaded / border stitching (Roadmap A.4)', () 
     );
   });
 });
+
+// Roadmap A.5 -- Origin Rebasing: setOriginChunk() menggeser referensi
+// baking posisi vertex mesher & menandai ulang semua chunk loaded.
+describe('VoxelEngine — setOriginChunk (Roadmap A.5)', () => {
+  test('originChunk default [0, 0, 0]', () => {
+    const engine = makeEngine();
+    assert.deepEqual(engine.originChunk, [0, 0, 0]);
+  });
+
+  test('setOriginChunk mengubah this.originChunk', () => {
+    const engine = makeEngine();
+    engine.setOriginChunk(5, 0, -3);
+    assert.deepEqual(engine.originChunk, [5, 0, -3]);
+  });
+
+  test('setOriginChunk menandai SEMUA chunk yang sedang loaded sebagai dirty', () => {
+    const engine = makeEngine();
+    engine.getOrCreateChunk(0, 0, 0);
+    engine.getOrCreateChunk(1, 0, 0);
+    engine.getOrCreateChunk(2, 0, 0);
+    for (const chunk of engine.chunks.values()) chunk.dirty = false;
+
+    engine.setOriginChunk(10, 0, 10);
+
+    for (const chunk of engine.chunks.values()) assert.equal(chunk.dirty, true);
+  });
+
+  test('remeshChunk membakar ctx.originChunk yang sesuai dengan this.originChunk saat ini', () => {
+    const engine = makeEngine();
+    engine.getOrCreateChunk(3, 0, 0);
+    engine.setOriginChunk(3, 0, 0);
+    engine.remeshChunk(3, 0, 0);
+    // FakeMesher (lihat makeEngine()) mencatat ctx terakhir yang diterima --
+    // pastikan originChunk yang dibakar konsisten dengan this.originChunk.
+    assert.deepEqual(engine.mesherPlugin.lastCtx.originChunk, [3, 0, 0]);
+  });
+});

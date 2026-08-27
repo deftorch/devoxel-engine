@@ -135,7 +135,7 @@ export async function initWebGL(canvas) {
       };
     },
 
-    draw(cameraState, chunkEids, Renderable, RenderMesh, ChunkCoord, chunkSize) {
+    draw(cameraState, chunkEids, Renderable, RenderMesh, ChunkCoord, chunkSize, originChunk) {
       gl.clearColor(0.53, 0.72, 0.86, 1.0);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
@@ -157,6 +157,10 @@ export async function initWebGL(canvas) {
       // semua chunk tetap digambar seperti sebelumnya.
       const frustumPlanes = ChunkCoord && chunkSize ? computeFrustumPlanes(viewProj) : null;
       const [csx, csy, csz] = chunkSize || [0, 0, 0];
+      // Roadmap A.5 -- Origin Rebasing: lihat catatan lengkap di
+      // webgpu/engine.js. AABB culling harus digeser dengan originChunk yang
+      // SAMA dipakai untuk membakar vertex mesh & menggeser `eye`.
+      const [ox, oy, oz] = originChunk || [0, 0, 0];
 
       lastDrawnChunks = 0;
       lastCulledChunks = 0;
@@ -165,10 +169,13 @@ export async function initWebGL(canvas) {
         if (!mesh) continue;
 
         if (frustumPlanes) {
-          const cx = ChunkCoord.cx[eid];
-          const cz = ChunkCoord.cz[eid];
-          const min = [cx * csx, 0, cz * csz];
-          const max = [cx * csx + csx, csy, cz * csz + csz];
+          // ChunkCoord tidak menyimpan cy (dunia cuma 1 layer chunk
+          // vertikal, cy selalu implisit 0) -- geser sumbu Y seragam.
+          const cx = ChunkCoord.cx[eid] - ox;
+          const cz = ChunkCoord.cz[eid] - oz;
+          const minY = -oy * csy;
+          const min = [cx * csx, minY, cz * csz];
+          const max = [cx * csx + csx, minY + csy, cz * csz + csz];
           if (aabbOutsideFrustum(frustumPlanes, min, max)) {
             lastCulledChunks++;
             continue;

@@ -1,5 +1,5 @@
 import { addEntity, query, addComponent } from 'bitecs';
-import { WORLD_CHUNKS, CHUNK_SX, CHUNK_SY, CHUNK_SZ, DEFAULT_VIEW_DISTANCE } from '../core/config.js';
+import { WORLD_CHUNKS, CHUNK_SX, CHUNK_SY, CHUNK_SZ, DEFAULT_VIEW_DISTANCE, DEFAULT_REBASE_THRESHOLD_CHUNKS } from '../core/config.js';
 import {
   world,
   Position,
@@ -18,6 +18,7 @@ import { InputManager } from './input/InputManager.js';
 import { CommandBus } from '../core/api/CommandBus.js';
 import { generateChunkVoxels } from './world/chunk.js';
 import { ChunkStreamer } from '../core/world/ChunkStreamer.js';
+import { OriginRebase } from '../core/world/OriginRebase.js';
 import { ChunkGenerationWorkerPool } from '../core/world/ChunkGenerationWorkerPool.js';
 import { deserializeStorage } from '../core/voxel/deserializeStorage.js';
 
@@ -67,6 +68,12 @@ async function main() {
   // WORLD_CHUNKS x WORLD_CHUNKS lewat buildWorld(), dipakai mode benchmark).
   let chunkStreamer = null;
   let infiniteTerrainEnabled = false;
+
+  // Roadmap A.5 -- Origin Rebasing: aktif berbarengan dengan chunkStreamer
+  // (dibuat/dibuang di titik yang sama, lihat toggle di bawah). Non-null
+  // cuma saat streaming aktif -- mode benchmark/editor/landing tidak pernah
+  // menggeser engine.originChunk dari default [0,0,0].
+  let originRebase = null;
 
   // Roadmap A.2 -- pool worker untuk generation (terpisah dari pool mesher
   // di AsyncWorkerMesher). Dibuat sekali secara lazy (bukan di setiap toggle
@@ -299,6 +306,7 @@ async function main() {
         engine.chunks.clear();
 
         chunkStreamer = new ChunkStreamer(DEFAULT_VIEW_DISTANCE);
+        originRebase = new OriginRebase(DEFAULT_REBASE_THRESHOLD_CHUNKS);
         // Lazy-create: worker pool baru di-spawn saat Infinite Terrain
         // pertama kali diaktifkan, lalu dipakai ulang untuk toggle
         // berikutnya dalam sesi yang sama (lihat komentar di deklarasinya).
@@ -308,6 +316,8 @@ async function main() {
         ui.showHUD();
       } else {
         chunkStreamer = null;
+        originRebase = null;
+        engine.originChunk = [0, 0, 0]; // kembali ke baking posisi absolut (mode benchmark)
         // Kembali ke mode benchmark tetap dengan konfigurasi yang sedang dipilih di UI.
         const storageType = document.getElementById('storage-select').value;
         const terrainType = document.getElementById('terrain-select').value;
@@ -323,6 +333,8 @@ async function main() {
     if (infiniteTerrainEnabled) {
       infiniteTerrainEnabled = false;
       chunkStreamer = null;
+      originRebase = null;
+      engine.originChunk = [0, 0, 0];
       if (infiniteTerrainToggle) infiniteTerrainToggle.checked = false;
     }
 
@@ -381,6 +393,8 @@ async function main() {
     if (currentRenderMode === 'raytrace' && infiniteTerrainEnabled) {
       infiniteTerrainEnabled = false;
       chunkStreamer = null;
+      originRebase = null;
+      engine.originChunk = [0, 0, 0];
       if (infiniteTerrainToggle) infiniteTerrainToggle.checked = false;
     }
 
@@ -597,6 +611,17 @@ async function main() {
           }
           for (const [cx, cz] of delta.toUnload) unloadStreamedChunk(cx, cz);
         }
+
+        // Roadmap A.5 -- Origin Rebasing: cek di titik yang sama (hanya
+        // saat pemain pindah chunk, bukan tiap frame -- konsisten dengan
+        // ChunkStreamer). Kalau originRebase.update() return true, origin
+        // baru saja digeser PERSIS ke (pcx, pcz) dan SEMUA chunk loaded
+        // sudah ditandai dirty oleh setOriginChunk() -- remeshDirtyChunks()
+        // di bawah akan membangun ulang vertex data-nya relatif ke origin
+        // baru itu pada frame yang sama.
+        if (originRebase && originRebase.update(pcx, pcz)) {
+          engine.setOriginChunk(originRebase.originChunkX, 0, originRebase.originChunkZ);
+        }
       }
 
       // FASE 5: Remesh Otomatis
@@ -610,14 +635,30 @@ async function main() {
         fpsFrames = 0;
       }
 
+      // Roadmap A.5 -- Origin Rebasing: `eye` HARUS digeser dengan
+      // engine.originChunk yang SAMA dipakai untuk membakar vertex mesh
+      // (lihat SurfaceNetsMesher.generateMesh()) dan untuk AABB culling
+      // (lihat draw() di kedua backend renderer) -- kalau tidak, kamera dan
+      // geometri akan berada di ruang koordinat yang berbeda. Saat
+      // originRebase null (mode benchmark/raytrace), engine.originChunk
+      // tetap [0,0,0] sehingga pengurangan ini no-op (perilaku lama persis).
+      const [rox, roy, roz] = engine.originChunk;
       const cameraState = {
-        eye: [Position.x[player], Position.y[player], Position.z[player]],
+        eye: [Position.x[player] - rox * CHUNK_SX, Position.y[player] - roy * CHUNK_SY, Position.z[player] - roz * CHUNK_SZ],
         yaw: Look.yaw[player],
         pitch: Look.pitch[player],
       };
 
       const chunkEids = query(world, [Renderable, ChunkCoord, RenderMesh]);
-      renderer.draw(cameraState, chunkEids, Renderable, RenderMesh, ChunkCoord, [CHUNK_SX, CHUNK_SY, CHUNK_SZ]);
+      renderer.draw(
+        cameraState,
+        chunkEids,
+        Renderable,
+        RenderMesh,
+        ChunkCoord,
+        [CHUNK_SX, CHUNK_SY, CHUNK_SZ],
+        engine.originChunk
+      );
 
       ui.updateHUD(
         fpsDisplay,
