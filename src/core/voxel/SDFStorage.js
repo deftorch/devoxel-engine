@@ -90,4 +90,27 @@ export class SDFStorage extends VoxelStorage {
     }
     this.sdf = dst;
   }
+
+  /**
+   * Roadmap A.2 -- serialize ke bentuk yang bisa dikirim balik dari
+   * generator.worker.js ke main thread sebagai Transferable Object
+   * (`postMessage(payload, [payload.sdf.buffer])`), bukan structured-clone
+   * penuh (lihat B.3). Mengikuti konvensi `payload.type` yang sama dengan
+   * FlatGridStorage.serialize()/deserialize() supaya bisa di-dispatch lewat
+   * mekanisme yang sama (lihat deserializeStorage.js).
+   */
+  serialize() {
+    return {
+      type: 'sdf',
+      dims: this.dims,
+      sdf: this.sdf,
+    };
+  }
+
+  /** Kebalikan dari serialize() -- lihat catatan di sana. */
+  static deserialize(payload) {
+    const storage = new SDFStorage(payload.dims[0], payload.dims[1], payload.dims[2]);
+    storage.sdf = new Float32Array(payload.sdf);
+    return storage;
+  }
 }

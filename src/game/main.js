@@ -18,6 +18,8 @@ import { InputManager } from './input/InputManager.js';
 import { CommandBus } from '../core/api/CommandBus.js';
 import { generateChunkVoxels } from './world/chunk.js';
 import { ChunkStreamer } from '../core/world/ChunkStreamer.js';
+import { ChunkGenerationWorkerPool } from '../core/world/ChunkGenerationWorkerPool.js';
+import { deserializeStorage } from '../core/voxel/deserializeStorage.js';
 
 async function main() {
   const ui = new UIManager();
@@ -66,33 +68,71 @@ async function main() {
   let chunkStreamer = null;
   let infiniteTerrainEnabled = false;
 
+  // Roadmap A.2 -- pool worker untuk generation (terpisah dari pool mesher
+  // di AsyncWorkerMesher). Dibuat sekali secara lazy (bukan di setiap toggle
+  // Infinite Terrain on/off) supaya worker tidak di-spawn/terminate berulang
+  // kali -- worker generation cukup mahal untuk dibuat, dan tidak menyimpan
+  // state apapun yang perlu di-reset antar sesi streaming.
+  let chunkGenerationPool = null;
+
   /**
-   * Load 1 chunk hasil keputusan ChunkStreamer. Generation masih di main
-   * thread di fase ini (sesuai A.1 -- worker generation baru di A.2), dan
-   * sengaja memakai jalur yang SAMA dengan buildWorld() (getOrCreateChunk +
-   * generateChunkVoxels + dirty=true) supaya listener 'chunkCreated' dan
-   * remeshDirtyChunks() di render loop menanganinya tanpa kode duplikat.
+   * Load 1 chunk hasil keputusan ChunkStreamer. Roadmap A.2: generation
+   * sekarang berjalan di worker pool (`ChunkGenerationWorkerPool`), bukan
+   * lagi blocking Main Thread seperti A.1.
    *
-   * Roadmap A.4: setelah storage chunk ini benar-benar terisi, panggil
-   * engine.markChunkLoaded() supaya tetangga yang SUDAH ADA (di-mesh di
-   * frame-frame sebelumnya dengan asumsi sisi ini belum ada) ikut ditandai
-   * dirty -- tanpa ini, mesh tetangga lama jadi stale/robek begitu chunk
-   * baru muncul di seam-nya. Lihat komentar di VoxelEngine.markChunkLoaded().
+   * `engine.getOrCreateChunk()` dipanggil SEKARANG (sinkron, sebelum worker
+   * selesai) supaya entity ECS + entry `engine.chunks` untuk chunk ini ada
+   * segera -- placeholder storage kosong bawaan `storageFactory` AMAN
+   * dijadikan neighbor sementara oleh chunk lain yang di-mesh lebih dulu:
+   * `SurfaceNetsMesher._getSDF()` fallback ke 1.0 (udara) baik untuk
+   * neighbor yang belum ada maupun yang ada tapi storage-nya masih
+   * placeholder kosong, jadi hasilnya identik sampai data asli tiba (lihat
+   * komentar lebih lengkap di ChunkGenerationWorkerPool).
+   *
+   * `priorityDistance` menentukan urutan proses di worker pool (chunk
+   * terdekat ke pemain duluan, bukan FIFO) -- lihat ChunkGenerationQueue.
+   *
+   * Roadmap A.4: setelah storage chunk ini benar-benar terisi (sekarang
+   * secara ASINKRON, dari worker), panggil engine.markChunkLoaded() --
+   * TITIK PEMANGGILANNYA SAMA seperti versi sinkron A.1, cuma window
+   * race condition-nya jadi lebih lebar (lihat catatan commit A.4).
    */
-  function loadStreamedChunk(cx, cz, storageType, terrainType) {
-    const chunk = engine.getOrCreateChunk(cx, 0, cz);
-    chunk.storage = generateChunkVoxels(cx, cz, storageType, terrainType);
-    chunk.dirty = true;
-    engine.markChunkLoaded(cx, 0, cz);
+  function loadStreamedChunk(cx, cz, storageType, terrainType, priorityDistance) {
+    engine.getOrCreateChunk(cx, 0, cz);
+
+    chunkGenerationPool
+      .requestChunk(cx, cz, storageType, terrainType, priorityDistance)
+      .then((storagePayload) => {
+        if (!storagePayload) return; // dibatalkan: chunk ini sudah di-unload lagi sebelum worker selesai
+
+        // Chunk bisa saja sudah di-unload lagi (pemain jalan cepat bolak-
+        // balik lewat batas radius) tepat di antara resolve() promise ini
+        // dan baris berikut -- cek lagi di engine.chunks, JANGAN pakai
+        // getOrCreateChunk() di sini (itu akan diam-diam menghidupkan lagi
+        // chunk yang sudah sengaja di-unload).
+        const chunk = engine.getChunk(cx, 0, cz);
+        if (!chunk) return;
+
+        chunk.storage = deserializeStorage(storagePayload);
+        chunk.dirty = true;
+        engine.markChunkLoaded(cx, 0, cz);
+      })
+      .catch((err) => {
+        console.error(`[main] Gagal generate chunk (${cx}, 0, ${cz}) di worker:`, err);
+      });
   }
 
   /**
-   * Unload 1 chunk hasil keputusan ChunkStreamer: hapus dari VoxelEngine
-   * (data storage, TIDAK dipersist -- lihat catatan A.3 di roadmap) dan
-   * hapus entity ECS terkait supaya GPU buffer-nya di-dispose lewat
-   * observer onRemove(RenderMesh)/onRemove(VoxelVolume) di components.js.
+   * Unload 1 chunk hasil keputusan ChunkStreamer: batalkan job generation
+   * yang mungkin masih tertunda untuk chunk ini (Roadmap A.2 -- mencegah
+   * chunk yang sudah di-unload "hidup lagi" kalau hasil worker datang
+   * telat), hapus dari VoxelEngine (data storage, TIDAK dipersist -- lihat
+   * catatan A.3 di roadmap), dan hapus entity ECS terkait supaya GPU buffer-
+   * nya di-dispose lewat observer onRemove(RenderMesh)/onRemove(VoxelVolume)
+   * di components.js.
    */
   function unloadStreamedChunk(cx, cz) {
+    if (chunkGenerationPool) chunkGenerationPool.cancel(cx, cz);
     engine.unloadChunk(cx, 0, cz);
 
     const key = `${cx},0,${cz}`;
@@ -259,6 +299,10 @@ async function main() {
         engine.chunks.clear();
 
         chunkStreamer = new ChunkStreamer(DEFAULT_VIEW_DISTANCE);
+        // Lazy-create: worker pool baru di-spawn saat Infinite Terrain
+        // pertama kali diaktifkan, lalu dipakai ulang untuk toggle
+        // berikutnya dalam sesi yang sama (lihat komentar di deklarasinya).
+        if (!chunkGenerationPool) chunkGenerationPool = new ChunkGenerationWorkerPool();
         ui.setStatus(`Infinite Terrain aktif — radius ${DEFAULT_VIEW_DISTANCE} chunk di sekitar pemain.`, 1);
         setTimeout(() => ui.hideOverlay(), 600);
         ui.showHUD();
@@ -543,7 +587,14 @@ async function main() {
         const pcz = Math.floor(Position.z[player] / CHUNK_SZ);
         const delta = chunkStreamer.update(pcx, pcz);
         if (delta) {
-          for (const [cx, cz] of delta.toLoad) loadStreamedChunk(cx, cz, 'sdf', 'normal');
+          // Roadmap A.2: prioritaskan job generation berdasar jarak
+          // Chebyshev ke chunk pemain SAAT INI (pcx, pcz) -- chunk yang
+          // langsung terlihat (dekat) diproses duluan oleh worker pool,
+          // bukan menurut urutan FIFO munculnya di delta.toLoad.
+          for (const [cx, cz] of delta.toLoad) {
+            const priorityDistance = Math.max(Math.abs(cx - pcx), Math.abs(cz - pcz));
+            loadStreamedChunk(cx, cz, 'sdf', 'normal', priorityDistance);
+          }
           for (const [cx, cz] of delta.toUnload) unloadStreamedChunk(cx, cz);
         }
       }

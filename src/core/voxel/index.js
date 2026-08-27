@@ -7,6 +7,7 @@ import { SVDAGStorage } from './SVDAGStorage.js';
 import { Tree64Storage } from './Tree64Storage.js';
 import { BrickMapStorage } from './BrickMapStorage.js';
 import { SDFStorage } from './SDFStorage.js';
+import { deserializeStorage } from './deserializeStorage.js';
 
 // Register every built-in storage backend under a short id so VoxelEngine
 // can resolve them purely from config, e.g. `{ storage: 'octree' }`.
@@ -40,4 +41,13 @@ defaultRegistry.registerStorage('sdf', (sx, sy, sz) => new SDFStorage(sx, sy, sz
   description: 'Stores distance-to-surface, ideal for smooth/organic terrain and raymarching.',
 });
 
-export { VoxelStorage, FlatGridStorage, OctreeStorage, SVDAGStorage, Tree64Storage, BrickMapStorage, SDFStorage };
+export {
+  VoxelStorage,
+  FlatGridStorage,
+  OctreeStorage,
+  SVDAGStorage,
+  Tree64Storage,
+  BrickMapStorage,
+  SDFStorage,
+  deserializeStorage,
+};
