@@ -2,6 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { SDFStorage } from '../core/voxel/SDFStorage.js';
 import { FlatGridStorage } from '../core/voxel/FlatGridStorage.js';
+import { QuantizedSDFStorage } from '../core/voxel/QuantizedSDFStorage.js';
 import { deserializeStorage } from '../core/voxel/deserializeStorage.js';
 
 /**
@@ -72,5 +73,30 @@ describe('deserializeStorage() — tipe yang belum didukung', () => {
   test('melempar error untuk payload tanpa field type', () => {
     assert.throws(() => deserializeStorage({}), /tidak valid/);
     assert.throws(() => deserializeStorage(null), /tidak valid/);
+  });
+});
+
+describe('QuantizedSDFStorage — serialize()/deserialize() round trip (Roadmap B.4)', () => {
+  test('nilai SDF yang di-set tetap sama (dalam toleransi kuantisasi) setelah round trip', () => {
+    const storage = new QuantizedSDFStorage(16, 40, 16);
+    storage.setSDF(0, 0, 0, -3.5);
+    storage.setSDF(15, 39, 15, 2.25);
+    storage.setSDF(8, 20, 8, -0.125);
+
+    const restored = deserializeStorage(roundTripViaTransfer(storage.serialize()));
+
+    assert.ok(restored instanceof QuantizedSDFStorage);
+    assert.deepEqual(restored.dims, [16, 40, 16]);
+    // Toleransi 1/512 (presisi kuantisasi) -- lihat catatan SCALE di QuantizedSDFStorage.js.
+    assert.ok(Math.abs(restored.getSDF(0, 0, 0) - -3.5) < 1 / 512);
+    assert.ok(Math.abs(restored.getSDF(15, 39, 15) - 2.25) < 1 / 512);
+    assert.ok(Math.abs(restored.getSDF(8, 20, 8) - -0.125) < 1 / 512);
+  });
+
+  test('payload.type === "sdf-compact" dan sdf adalah Int16Array (siap jadi Transferable)', () => {
+    const storage = new QuantizedSDFStorage(4, 4, 4);
+    const payload = storage.serialize();
+    assert.equal(payload.type, 'sdf-compact');
+    assert.ok(payload.sdf instanceof Int16Array);
   });
 });

@@ -8,6 +8,16 @@ export const WORLD_CHUNKS = 6; // grid WORLD_CHUNKS x WORLD_CHUNKS (mode benchma
 // dibesarkan; (2*r+1)^2 = jumlah chunk yang akan loaded sekaligus.
 export const DEFAULT_VIEW_DISTANCE = 5;
 
+// Roadmap B.4 -- radius (chunk, Chebyshev) dari pemain yang masih dapat
+// storage SDF PENUH ('sdf', Float32). Di luar radius ini (tapi masih dalam
+// DEFAULT_VIEW_DISTANCE) dipakai 'sdf-compact' (Int16, setengah memori --
+// lihat QuantizedSDFStorage.js) karena kecil kemungkinan chunk sejauh itu
+// diedit dalam waktu dekat, dan presisinya (1/512) tetap jauh lebih halus
+// dari kebutuhan visual pada jarak render itu. HARUS lebih kecil dari
+// DEFAULT_VIEW_DISTANCE (kalau >=, semua chunk akan selalu dapat storage
+// penuh, fitur ini jadi tidak berpengaruh apapun).
+export const DEFAULT_NEAR_STORAGE_RADIUS = 2;
+
 // Roadmap A.5 -- Origin Rebasing: jarak (dalam chunk, Chebyshev) dari
 // origin saat ini yang memicu rebase (lihat OriginRebase.js). Dipilih jauh
 // lebih besar dari DEFAULT_VIEW_DISTANCE supaya rebase (yang memicu remesh

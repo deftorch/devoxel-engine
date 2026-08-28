@@ -1,5 +1,5 @@
 import { addEntity, query, addComponent } from 'bitecs';
-import { WORLD_CHUNKS, CHUNK_SX, CHUNK_SY, CHUNK_SZ, DEFAULT_VIEW_DISTANCE, DEFAULT_REBASE_THRESHOLD_CHUNKS, DEFAULT_REMESH_BUDGET_PER_FRAME } from '../core/config.js';
+import { WORLD_CHUNKS, CHUNK_SX, CHUNK_SY, CHUNK_SZ, DEFAULT_VIEW_DISTANCE, DEFAULT_REBASE_THRESHOLD_CHUNKS, DEFAULT_REMESH_BUDGET_PER_FRAME, DEFAULT_NEAR_STORAGE_RADIUS } from '../core/config.js';
 import {
   world,
   Position,
@@ -677,7 +677,16 @@ async function main() {
           // bukan menurut urutan FIFO munculnya di delta.toLoad.
           for (const [cx, cz] of delta.toLoad) {
             const priorityDistance = Math.max(Math.abs(cx - pcx), Math.abs(cz - pcz));
-            loadStreamedChunk(cx, cz, 'sdf', 'normal', priorityDistance);
+            // Roadmap B.4 -- chunk dekat pemain dapat storage SDF penuh
+            // (presisi maksimal, cocok untuk diedit); chunk lebih jauh
+            // (tapi masih dalam radius streaming) dapat storage
+            // terkompresi -- lihat DEFAULT_NEAR_STORAGE_RADIUS di config.js.
+            // Keputusan ini HANYA diambil sekali, saat chunk pertama kali
+            // di-load -- storage TIDAK di-upgrade/downgrade otomatis kalau
+            // pemain berpindah jarak setelahnya (lihat catatan lengkap di
+            // ROADMAP soal keputusan scope ini).
+            const storageType = priorityDistance <= DEFAULT_NEAR_STORAGE_RADIUS ? 'sdf' : 'sdf-compact';
+            loadStreamedChunk(cx, cz, storageType, 'normal', priorityDistance);
           }
           for (const [cx, cz] of delta.toUnload) unloadStreamedChunk(cx, cz);
         }

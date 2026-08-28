@@ -7,6 +7,7 @@ import { BrickMapStorage } from '../../core/voxel/BrickMapStorage.js';
 import { SVDAGStorage } from '../../core/voxel/SVDAGStorage.js';
 import { Tree64Storage } from '../../core/voxel/Tree64Storage.js';
 import { SDFStorage } from '../../core/voxel/SDFStorage.js';
+import { QuantizedSDFStorage } from '../../core/voxel/QuantizedSDFStorage.js';
 
 export function generateChunkVoxels(chunkX, chunkZ, storageType = 'flat', terrainType = 'normal') {
   let storage;
@@ -15,13 +16,23 @@ export function generateChunkVoxels(chunkX, chunkZ, storageType = 'flat', terrai
   else if (storageType === 'svdag') storage = new SVDAGStorage(CHUNK_SX, CHUNK_SY, CHUNK_SZ);
   else if (storageType === 'tree64') storage = new Tree64Storage(CHUNK_SX, CHUNK_SY, CHUNK_SZ);
   else if (storageType === 'sdf') storage = new SDFStorage(CHUNK_SX, CHUNK_SY, CHUNK_SZ);
+  // Roadmap B.4 -- storage SDF terkompresi (Int16, setengah memori) untuk
+  // chunk jauh di jalur streaming. Interface identik dengan 'sdf' (lihat
+  // QuantizedSDFStorage.js), jadi generation di bawah TIDAK perlu tahu
+  // bedanya -- itu sebabnya cek `storageType === 'sdf'` di bawah diperluas
+  // jadi `isSDFLike` alih-alih ditambah cabang if/else baru untuk tiap
+  // varian SDF.
+  else if (storageType === 'sdf-compact') storage = new QuantizedSDFStorage(CHUNK_SX, CHUNK_SY, CHUNK_SZ);
   else storage = new FlatGridStorage(CHUNK_SX, CHUNK_SY, CHUNK_SZ);
+
+  const isSDFLike = storageType === 'sdf' || storageType === 'sdf-compact';
+
   for (let x = 0; x < CHUNK_SX; x++) {
     for (let z = 0; z < CHUNK_SZ; z++) {
       const wx = chunkX * CHUNK_SX + x;
       const wz = chunkZ * CHUNK_SZ + z;
 
-      if (storageType === 'sdf' && terrainType === 'normal') {
+      if (isSDFLike && terrainType === 'normal') {
         const h = heightRaw(wx, wz);
         for (let y = 0; y < CHUNK_SY; y++) {
           // SDF base: jarak dari ketinggian permukaan. <0 artinya di dalam tanah.
@@ -131,7 +142,7 @@ export function generateChunkVoxels(chunkX, chunkZ, storageType = 'flat', terrai
   // setipis 1 voxel yang mungkin lolos dari tuning noise di atas (lihat
   // §2.3 rencana perbaikan robekan terrain). 1 pass, blend ringan supaya
   // detail terrain asli tidak ikut hilang.
-  if (storageType === 'sdf' && terrainType === 'normal' && typeof storage.smoothSDF === 'function') {
+  if (isSDFLike && terrainType === 'normal' && typeof storage.smoothSDF === 'function') {
     storage.smoothSDF(0.15);
   }
 

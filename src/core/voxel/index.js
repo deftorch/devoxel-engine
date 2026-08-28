@@ -7,6 +7,7 @@ import { SVDAGStorage } from './SVDAGStorage.js';
 import { Tree64Storage } from './Tree64Storage.js';
 import { BrickMapStorage } from './BrickMapStorage.js';
 import { SDFStorage } from './SDFStorage.js';
+import { QuantizedSDFStorage } from './QuantizedSDFStorage.js';
 import { deserializeStorage } from './deserializeStorage.js';
 
 // Register every built-in storage backend under a short id so VoxelEngine
@@ -41,6 +42,12 @@ defaultRegistry.registerStorage('sdf', (sx, sy, sz) => new SDFStorage(sx, sy, sz
   description: 'Stores distance-to-surface, ideal for smooth/organic terrain and raymarching.',
 });
 
+defaultRegistry.registerStorage('sdf-compact', (sx, sy, sz) => new QuantizedSDFStorage(sx, sy, sz), {
+  label: 'Signed Distance Field (Compact, Int16)',
+  description:
+    'Roadmap B.4 -- setengah memori dari SDF biasa (Int16 vs Float32), drop-in compatible untuk SurfaceNetsMesher. Dipakai untuk chunk jauh dari pemain di jalur streaming.',
+});
+
 export {
   VoxelStorage,
   FlatGridStorage,
@@ -49,5 +56,6 @@ export {
   Tree64Storage,
   BrickMapStorage,
   SDFStorage,
+  QuantizedSDFStorage,
   deserializeStorage,
 };
