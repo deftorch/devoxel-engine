@@ -88,7 +88,7 @@ karena kondisinya asinkron/race condition.
 
 # Bagian A — Infinite Terrain
 
-## A.1 — Chunk Streaming Berbasis Posisi Pemain (sinkron dulu)
+## A.1 — Chunk Streaming Berbasis Posisi Pemain (sinkron dulu) — ✅ SELESAI
 
 **Prasyarat:** Fase 0 (seam fix) selesai.
 
@@ -111,7 +111,7 @@ karena kondisinya asinkron/race condition.
 - Tidak ada chunk "bocor" tertinggal ter-render padahal sudah di luar
   radius (cek lewat `engine.chunks.size` vs jumlah draw call).
 
-## A.2 — Generation ke Worker Pool
+## A.2 — Generation ke Worker Pool — ✅ SELESAI
 
 **Prasyarat:** A.1 selesai dan radius mulai terasa bikin stutter di main
 thread saat chunk baru masuk.
@@ -133,7 +133,7 @@ thread saat chunk baru masuk.
 - Chunk yang paling dekat pemain konsisten muncul lebih dulu daripada
   chunk di tepi radius.
 
-## A.3 — Persistensi Chunk yang Diedit
+## A.3 — Persistensi Chunk yang Diedit — ⬜ BELUM
 
 **Prasyarat:** A.1 selesai (butuh event unload yang jelas sebagai trigger
 save).
@@ -154,7 +154,7 @@ save).
 - Reload halaman (kalau world_id persist antar sesi) — chunk yang pernah
   diedit tetap sesuai state terakhir.
 
-## A.4 — Border Stitching untuk Chunk yang Load Asinkron
+## A.4 — Border Stitching untuk Chunk yang Load Asinkron — ✅ SELESAI
 
 **Prasyarat:** A.1 aktif. **Ini bagian paling kritis** — perluasan
 langsung dari fix Fase 0.
@@ -186,7 +186,23 @@ langsung dari fix Fase 0.
   terlihat di boundary manapun, termasuk saat pemain jalan cepat
   (banyak chunk load/unload berurutan).
 
-## A.5 — Origin Rebasing (Precision)
+## A.5 — Origin Rebasing (Precision) — ✅ SELESAI
+
+**Catatan implementasi (update pasca-roadmap ini ditulis):** dievaluasi 2
+pendekatan berbeda — "floating-origin per-frame" (origin digeser ke kamera
+tiap frame, butuh perubahan pipeline WGSL/bind-group) vs "rebase berkala"
+(origin digeser hanya saat pemain melewati `DEFAULT_REBASE_THRESHOLD_CHUNKS`
+= 32 chunk, nol perubahan GPU/shader). **Dipilih rebase berkala**, karena
+sepenuhnya bisa diverifikasi lewat `node --test` di sandbox tanpa browser,
+sementara floating-origin per-frame butuh verifikasi visual GPU sungguhan
+yang tidak tersedia. Implementasi: `src/core/world/OriginRebase.js` +
+`VoxelEngine.setOriginChunk()`.
+
+Trade-off yang diakui dari pendekatan ini (rebase memicu dirty massal ke
+SEMUA chunk loaded) sudah **di-hardening** lewat
+`VoxelEngine.remeshDirtyChunks(budget, priorityOrigin)` — spike diserap
+bertahap lintas beberapa frame (nearest-first ke posisi pemain), bukan
+sekali lonjakan penuh. Lihat commit "Hardening A.5" untuk detail & test.
 
 **Prasyarat:** independen, tapi kerjakan sebelum menguji radius besar di
 jarak jauh dari `(0,0,0)`.
@@ -202,7 +218,7 @@ jarak jauh dari `(0,0,0)`.
 - Pemain jalan ke koordinat >100,000 unit dari origin awal — tidak ada
   jitter/getaran visual pada mesh statis saat kamera diam.
 
-## A.6 — LOD Chunk Jauh (opsional, terakhir)
+## A.6 — LOD Chunk Jauh (opsional, terakhir) — ⬜ BELUM
 
 **Prasyarat:** A.1–A.5 selesai dan **terbukti lewat profiling** (bukan
 asumsi) bahwa vertex count/draw call chunk jauh jadi bottleneck nyata.
@@ -214,7 +230,7 @@ masalah performa, bukan lagi soal "infinite"-nya).
 
 # Bagian B — Optimisasi
 
-## B.1 — Frustum Culling & Draw Call *(paling murah, kerjakan duluan)*
+## B.1 — Frustum Culling & Draw Call *(paling murah, kerjakan duluan)* — ✅ SELESAI
 
 **Prasyarat:** tidak ada — bisa dikerjakan kapan saja, independen dari
 Bagian A.
@@ -235,7 +251,7 @@ Bagian A.
 - Chunk kosong tidak menghasilkan draw call sama sekali (cek jumlah
   `drawIndexed()` per frame vs jumlah chunk ter-load).
 
-## B.2 — Partial Remeshing Sungguhan
+## B.2 — Partial Remeshing Sungguhan — ⬜ BELUM (prioritas berikutnya yang disarankan)
 
 **Prasyarat:** Fase 0 selesai (dirty-tracking benar). Makin penting
 begitu A.1 aktif (frekuensi remesh naik karena chunk baru terus muncul).
@@ -256,7 +272,14 @@ begitu A.1 aktif (frekuensi remesh naik karena chunk baru terus muncul).
 - Waktu remesh untuk 1 edit kecil di chunk besar terukur lebih cepat
   dibanding full-chunk remesh sebelumnya (profiling before/after).
 
-## B.3 — Worker: Transferable Objects & Prioritas
+## B.3 — Worker: Transferable Objects & Prioritas — ✅ SEBAGIAN SELESAI
+
+**Catatan:** sudah terpasang di jalur generation (`generator.worker.js`,
+lewat Roadmap A.2) dan jalur greedy-mesh (`mesher.worker.js`, transferable
+sudah dipakai untuk arah worker→main). `AsyncWorkerMesher.js` (arah
+main→worker) sengaja TIDAK memakai transferable — storage buffer harus
+tetap dipegang main thread untuk akses langsung, jadi trade-off ini
+disengaja, bukan celah yang terlewat.
 
 **Prasyarat:** tidak ada, tapi jadi prasyarat A.2.
 
@@ -271,7 +294,7 @@ begitu A.1 aktif (frekuensi remesh naik karena chunk baru terus muncul).
   transferable — harus mendekati instan (bukan proporsional ke ukuran
   data).
 
-## B.4 — Storage Terkompresi untuk Chunk Jauh
+## B.4 — Storage Terkompresi untuk Chunk Jauh — ⬜ BELUM
 
 **Prasyarat:** A.6/B.5 (LOD) mulai relevan, atau memory jadi masalah
 nyata di A.1 dengan radius besar.
@@ -290,7 +313,7 @@ nyata di A.1 dengan radius besar.
 - Memory per chunk jauh terukur turun signifikan dibanding storage penuh,
   tanpa perbedaan visual yang terlihat pada jarak render itu.
 
-## B.5 — LOD untuk Chunk Jauh
+## B.5 — LOD untuk Chunk Jauh — ⬜ BELUM
 
 **Prasyarat:** semua di atas selesai **dan** profiling membuktikan ini
 memang bottleneck (jangan desain di awal berdasar asumsi).
