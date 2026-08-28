@@ -296,6 +296,117 @@ describe('VoxelEngine — unloadChunk (Roadmap A.1)', () => {
   });
 });
 
+describe('VoxelEngine — Persistensi Chunk yang Diedit (Roadmap A.3)', () => {
+  function makeFakePersistenceStore() {
+    const saved = new Map(); // key "cx,cy,cz" -> storage instance yang di-save
+    return {
+      saved,
+      saveCalls: 0,
+      async save(cx, cy, cz, storage) {
+        this.saveCalls++;
+        saved.set(`${cx},${cy},${cz}`, storage);
+      },
+      async load(cx, cy, cz) {
+        return saved.get(`${cx},${cy},${cz}`) || null;
+      },
+    };
+  }
+
+  test('chunk baru mulai dengan everEdited = false', () => {
+    const engine = makeEngine();
+    const chunk = engine.getOrCreateChunk(0, 0, 0);
+    assert.equal(chunk.everEdited, false);
+  });
+
+  test('setVoxel menandai chunk everEdited = true', () => {
+    const engine = makeEngine();
+    engine.setVoxel(1, 1, 1, 5);
+    assert.equal(engine.getChunk(0, 0, 0).everEdited, true);
+  });
+
+  test('tanpa persistenceStore (default null), unloadChunk tidak mencoba menyimpan apapun (tidak error)', () => {
+    const engine = makeEngine();
+    engine.setVoxel(1, 1, 1, 5);
+    assert.doesNotThrow(() => engine.unloadChunk(0, 0, 0));
+  });
+
+  test('setPersistenceStore(null) menonaktifkan persistensi lagi', () => {
+    const engine = makeEngine();
+    const store = makeFakePersistenceStore();
+    engine.setPersistenceStore(store);
+    engine.setPersistenceStore(null);
+
+    engine.setVoxel(1, 1, 1, 5);
+    engine.unloadChunk(0, 0, 0);
+
+    assert.equal(store.saveCalls, 0);
+  });
+
+  test('unloadChunk memanggil persistenceStore.save() HANYA untuk chunk yang everEdited', async () => {
+    const engine = makeEngine();
+    const store = makeFakePersistenceStore();
+    engine.setPersistenceStore(store);
+
+    engine.getOrCreateChunk(1, 0, 1); // TIDAK pernah diedit
+    engine.setVoxel(0, 0, 0, 5); // chunk (0,0,0) -- diedit
+
+    engine.unloadChunk(1, 0, 1);
+    engine.unloadChunk(0, 0, 0);
+
+    // save() dipanggil async (fire-and-forget) -- beri kesempatan microtask
+    // queue jalan sebelum diperiksa.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(store.saveCalls, 1, 'cuma chunk yang everEdited yang boleh disimpan');
+    assert.ok(store.saved.has('0,0,0'));
+    assert.ok(!store.saved.has('1,0,1'));
+  });
+
+  test('unloadChunk mengirim storage yang BENAR (sesuai state terakhir) ke persistenceStore.save()', async () => {
+    const engine = makeEngine();
+    const store = makeFakePersistenceStore();
+    engine.setPersistenceStore(store);
+
+    engine.setVoxel(2, 2, 2, 7);
+    engine.unloadChunk(0, 0, 0);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const savedStorage = store.saved.get('0,0,0');
+    assert.equal(savedStorage.get(2, 2, 2), 7);
+  });
+
+  test('emit "chunkPersisted" setelah save() selesai', async () => {
+    const engine = makeEngine();
+    const store = makeFakePersistenceStore();
+    engine.setPersistenceStore(store);
+    engine.setVoxel(1, 1, 1, 5);
+
+    let persistedPayload = null;
+    engine.on('chunkPersisted', (payload) => {
+      persistedPayload = payload;
+    });
+
+    engine.unloadChunk(0, 0, 0);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.deepEqual(persistedPayload, { cx: 0, cy: 0, cz: 0 });
+  });
+
+  test('persistenceStore.save() yang reject tidak melempar error tak tertangani (degradasi anggun)', async () => {
+    const engine = makeEngine();
+    engine.setPersistenceStore({
+      save: async () => {
+        throw new Error('simulasi IndexedDB gagal');
+      },
+      load: async () => null,
+    });
+    engine.setVoxel(1, 1, 1, 5);
+
+    assert.doesNotThrow(() => engine.unloadChunk(0, 0, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0)); // beri waktu .catch() internal jalan
+  });
+});
+
 // Roadmap A.4 -- Border Stitching untuk Chunk yang Load Asinkron (dipakai
 // oleh streaming A.1, karena di sana chunk load bertahap antar frame, beda
 // dengan buildWorld() yang membuat semua chunk sekaligus sebelum mesh

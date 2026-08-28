@@ -21,6 +21,8 @@ import { ChunkStreamer } from '../core/world/ChunkStreamer.js';
 import { OriginRebase } from '../core/world/OriginRebase.js';
 import { ChunkGenerationWorkerPool } from '../core/world/ChunkGenerationWorkerPool.js';
 import { deserializeStorage } from '../core/voxel/deserializeStorage.js';
+import { ChunkPersistenceStore } from '../core/world/ChunkPersistenceStore.js';
+import { createIndexedDBAdapter } from '../core/world/IndexedDBAdapter.js';
 
 async function main() {
   const ui = new UIManager();
@@ -82,10 +84,34 @@ async function main() {
   // state apapun yang perlu di-reset antar sesi streaming.
   let chunkGenerationPool = null;
 
+  // Roadmap A.3 -- Persistensi Chunk yang Diedit. Sama seperti
+  // chunkGenerationPool: dibuat sekali secara lazy (bukan di setiap toggle
+  // Infinite Terrain on/off) supaya koneksi IndexedDB tidak dibuka/ditutup
+  // berulang, TAPI baru dipasang ke engine (engine.setPersistenceStore())
+  // saat Infinite Terrain aktif -- mode benchmark/editor tidak pernah
+  // menyimpan/memuat apapun dari IndexedDB. Tetap null kalau IndexedDB
+  // tidak tersedia di environment ini (mis. beberapa mode headless/test) --
+  // Infinite Terrain tetap jalan tanpa persistensi, cuma tanpa jaminan
+  // galian tersimpan lintas sesi.
+  let chunkPersistenceStore = null;
+  if (typeof indexedDB !== 'undefined') {
+    try {
+      chunkPersistenceStore = new ChunkPersistenceStore(createIndexedDBAdapter());
+    } catch (err) {
+      console.warn('[main] IndexedDB tidak tersedia, persistensi chunk dinonaktifkan:', err);
+    }
+  }
+
   /**
    * Load 1 chunk hasil keputusan ChunkStreamer. Roadmap A.2: generation
    * sekarang berjalan di worker pool (`ChunkGenerationWorkerPool`), bukan
    * lagi blocking Main Thread seperti A.1.
+   *
+   * Roadmap A.3: SEBELUM meminta generation, cek dulu apakah chunk ini
+   * pernah diedit & disimpan di sesi sebelumnya (`chunkPersistenceStore`).
+   * Kalau ada, muat data tersimpan itu langsung dan SKIP generation sama
+   * sekali -- generation ulang dari noise akan menghasilkan terrain
+   * DEFAULT lagi, menghapus galian pemain yang seharusnya persisten.
    *
    * `engine.getOrCreateChunk()` dipanggil SEKARANG (sinkron, sebelum worker
    * selesai) supaya entity ECS + entry `engine.chunks` untuk chunk ini ada
@@ -94,18 +120,49 @@ async function main() {
    * `SurfaceNetsMesher._getSDF()` fallback ke 1.0 (udara) baik untuk
    * neighbor yang belum ada maupun yang ada tapi storage-nya masih
    * placeholder kosong, jadi hasilnya identik sampai data asli tiba (lihat
-   * komentar lebih lengkap di ChunkGenerationWorkerPool).
+   * komentar lebih lengkap di ChunkGenerationWorkerPool) -- berlaku juga
+   * untuk jeda singkat menunggu lookup persistence di bawah.
    *
    * `priorityDistance` menentukan urutan proses di worker pool (chunk
    * terdekat ke pemain duluan, bukan FIFO) -- lihat ChunkGenerationQueue.
    *
-   * Roadmap A.4: setelah storage chunk ini benar-benar terisi (sekarang
-   * secara ASINKRON, dari worker), panggil engine.markChunkLoaded() --
-   * TITIK PEMANGGILANNYA SAMA seperti versi sinkron A.1, cuma window
-   * race condition-nya jadi lebih lebar (lihat catatan commit A.4).
+   * Roadmap A.4: setelah storage chunk ini benar-benar terisi (baik dari
+   * data tersimpan MAUPUN dari worker generation), panggil
+   * engine.markChunkLoaded() -- TITIK PEMANGGILANNYA SAMA di kedua jalur,
+   * cuma window race condition-nya jadi lebih lebar untuk jalur worker
+   * (lihat catatan commit A.4).
    */
-  function loadStreamedChunk(cx, cz, storageType, terrainType, priorityDistance) {
+  async function loadStreamedChunk(cx, cz, storageType, terrainType, priorityDistance) {
     engine.getOrCreateChunk(cx, 0, cz);
+
+    if (chunkPersistenceStore) {
+      let savedStorage = null;
+      try {
+        savedStorage = await chunkPersistenceStore.load(cx, 0, cz);
+      } catch (err) {
+        // Gagal baca IndexedDB (mis. kuota, browser mode private) --
+        // degradasi anggun: lanjut ke generation seperti biasa, jangan
+        // sampai satu chunk gagal load bikin seluruh streaming berhenti.
+        console.warn(`[main] Gagal memuat data tersimpan chunk (${cx},0,${cz}), generate ulang:`, err);
+      }
+      if (savedStorage) {
+        // Chunk bisa saja sudah di-unload lagi (pemain jalan cepat) tepat
+        // selama kita menunggu IndexedDB -- cek ulang, jangan
+        // getOrCreateChunk() (akan diam-diam menghidupkan lagi chunk yang
+        // sudah sengaja di-unload).
+        const chunk = engine.getChunk(cx, 0, cz);
+        if (!chunk) return;
+
+        chunk.storage = savedStorage;
+        chunk.dirty = true;
+        // Data ini ADA di persistence karena dulu pernah everEdited=true --
+        // pertahankan flag itu supaya siklus edit-lagi -> unload berikutnya
+        // tetap tersimpan (bukan cuma tersimpan sekali lalu "lupa").
+        chunk.everEdited = true;
+        engine.markChunkLoaded(cx, 0, cz);
+        return; // SKIP generation sama sekali -- lihat catatan di atas.
+      }
+    }
 
     chunkGenerationPool
       .requestChunk(cx, cz, storageType, terrainType, priorityDistance)
@@ -311,6 +368,10 @@ async function main() {
         // pertama kali diaktifkan, lalu dipakai ulang untuk toggle
         // berikutnya dalam sesi yang sama (lihat komentar di deklarasinya).
         if (!chunkGenerationPool) chunkGenerationPool = new ChunkGenerationWorkerPool();
+        // Roadmap A.3 -- pasang persistence store HANYA selama streaming
+        // aktif (dipasang di sini, dilepas lagi di cabang else di bawah) --
+        // mode benchmark/editor tidak pernah menyimpan/memuat chunk.
+        if (chunkPersistenceStore) engine.setPersistenceStore(chunkPersistenceStore);
         ui.setStatus(`Infinite Terrain aktif — radius ${DEFAULT_VIEW_DISTANCE} chunk di sekitar pemain.`, 1);
         setTimeout(() => ui.hideOverlay(), 600);
         ui.showHUD();
@@ -318,6 +379,7 @@ async function main() {
         chunkStreamer = null;
         originRebase = null;
         engine.originChunk = [0, 0, 0]; // kembali ke baking posisi absolut (mode benchmark)
+        engine.setPersistenceStore(null); // Roadmap A.3 -- benchmark/editor tidak pakai persistensi
         // Kembali ke mode benchmark tetap dengan konfigurasi yang sedang dipilih di UI.
         const storageType = document.getElementById('storage-select').value;
         const terrainType = document.getElementById('terrain-select').value;
@@ -335,6 +397,7 @@ async function main() {
       chunkStreamer = null;
       originRebase = null;
       engine.originChunk = [0, 0, 0];
+      engine.setPersistenceStore(null); // Roadmap A.3
       if (infiniteTerrainToggle) infiniteTerrainToggle.checked = false;
     }
 
@@ -395,6 +458,7 @@ async function main() {
       chunkStreamer = null;
       originRebase = null;
       engine.originChunk = [0, 0, 0];
+      engine.setPersistenceStore(null); // Roadmap A.3
       if (infiniteTerrainToggle) infiniteTerrainToggle.checked = false;
     }
 

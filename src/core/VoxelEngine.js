@@ -57,6 +57,15 @@ export class VoxelEngine {
     // Lihat OriginRebase.js untuk penjelasan lengkap kenapa ini diperlukan.
     this.originChunk = [0, 0, 0];
 
+    // Roadmap A.3 -- Persistensi Chunk yang Diedit: kalau di-set (lewat
+    // setPersistenceStore()), unloadChunk() akan menyimpan storage chunk
+    // yang PERNAH diedit (chunk.everEdited, lihat setVoxel()) sebelum
+    // datanya hilang dari memori. Default null = TIDAK ada persistensi
+    // sama sekali -- perilaku lama persis (unload = data hilang begitu
+    // saja) untuk semua caller yang tidak menyetelnya (editor, benchmark,
+    // mode non-streaming).
+    this.persistenceStore = null;
+
     // Resolve plugins declared by id in the config, if any.
     if (options.storage) this.useStorageProvider(this._resolveStorageFactory(options.storage));
     if (options.mesher) this.useMesher(this._resolveMesher(options.mesher));
@@ -177,7 +186,14 @@ export class VoxelEngine {
       // _dirtyBoundaryNeighbors()/markChunkLoaded()). Semuanya mulai null
       // untuk chunk baru, artinya build PERTAMA selalu full (aman, tidak
       // ada cache untuk dipakai ulang).
-      chunk = { cx, cy, cz, storage, dirty: true, mesh: null, cellCache: null, pendingDirtyBounds: null, forceFullRemesh: false };
+      // Roadmap A.3 -- `everEdited`: true kalau chunk ini PERNAH kena
+      // setVoxel() langsung (bukan cuma hasil generation/default). Dipakai
+      // unloadChunk() untuk memutuskan apakah storage-nya perlu disimpan
+      // ke persistenceStore sebelum data hilang dari memori -- chunk yang
+      // belum pernah diedit tidak perlu disimpan sama sekali, karena
+      // generation ulang dari noise (deterministik, seed sama) akan
+      // menghasilkan data yang SAMA PERSIS lagi.
+      chunk = { cx, cy, cz, storage, dirty: true, mesh: null, cellCache: null, pendingDirtyBounds: null, forceFullRemesh: false, everEdited: false };
       this.chunks.set(key, chunk);
       this.emit('chunkCreated', chunk);
     }
@@ -205,6 +221,27 @@ export class VoxelEngine {
 
     this.emit('chunkUnloaded', chunk);
     this.chunks.delete(key);
+
+    // Roadmap A.3 -- Persistensi: cuma simpan chunk yang PERNAH diedit
+    // langsung (chunk.everEdited, lihat setVoxel()/getOrCreateChunk()) --
+    // chunk default hasil generation tidak perlu disimpan, generate ulang
+    // dari noise akan menghasilkan data yang sama persis lagi.
+    //
+    // Fire-and-forget SENGAJA (tidak di-await): unloadChunk() dipertahankan
+    // SINKRON supaya caller lama (main.js#unloadStreamedChunk, cleanup ECS)
+    // tidak perlu berubah jadi async -- 100% backward compatible. Konsekuensi:
+    // kalau pemain balik ke chunk yang sama SANGAT cepat (sebelum promise
+    // save() ini selesai), ada window race kecil di mana data tersimpan
+    // belum tertulis. Ini KNOWN LIMITATION yang diterima (lihat ROADMAP),
+    // bukan bug -- caller yang butuh jaminan "sudah tersimpan" bisa dengar
+    // event 'chunkPersisted' di bawah.
+    if (this.persistenceStore && chunk.everEdited) {
+      this.persistenceStore
+        .save(cx, cy, cz, chunk.storage)
+        .then(() => this.emit('chunkPersisted', { cx, cy, cz }))
+        .catch((err) => console.error(`[VoxelEngine] Gagal menyimpan chunk (${cx},${cy},${cz}):`, err));
+    }
+
     return chunk;
   }
 
@@ -224,6 +261,9 @@ export class VoxelEngine {
     const chunk = this.getOrCreateChunk(cx, cy, cz);
     chunk.storage.set(lx, ly, lz, value);
     chunk.dirty = true;
+    // Roadmap A.3 -- lihat catatan di getOrCreateChunk(): menandai chunk
+    // ini perlu disimpan kalau/saat di-unload nanti.
+    chunk.everEdited = true;
 
     // Roadmap B.2 -- Partial Remeshing: akumulasi AABB cell (dalam ruang
     // koordinat CELL yang dipakai SurfaceNetsMesher, -1..dims-1, BUKAN
@@ -496,6 +536,18 @@ export class VoxelEngine {
       // tapi dihindari sepenuhnya dengan memaksa build FULL di sini.
       chunk.forceFullRemesh = true;
     }
+  }
+
+  /**
+   * Roadmap A.3 -- Persistensi Chunk yang Diedit: suntikkan
+   * ChunkPersistenceStore (lihat ChunkPersistenceStore.js) yang dipakai
+   * unloadChunk() untuk menyimpan storage chunk yang PERNAH diedit
+   * langsung sebelum datanya hilang dari memori. Panggil dengan `null`
+   * untuk mematikan persistensi lagi (default).
+   */
+  setPersistenceStore(store) {
+    this.persistenceStore = store || null;
+    return this;
   }
 
   /**
