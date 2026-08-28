@@ -251,7 +251,7 @@ Bagian A.
 - Chunk kosong tidak menghasilkan draw call sama sekali (cek jumlah
   `drawIndexed()` per frame vs jumlah chunk ter-load).
 
-## B.2 — Partial Remeshing Sungguhan — ⬜ BELUM (prioritas berikutnya yang disarankan)
+## B.2 — Partial Remeshing Sungguhan — ✅ SELESAI
 
 **Prasyarat:** Fase 0 selesai (dirty-tracking benar). Makin penting
 begitu A.1 aktif (frekuensi remesh naik karena chunk baru terus muncul).
