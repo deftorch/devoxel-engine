@@ -294,7 +294,31 @@ disengaja, bukan celah yang terlewat.
   transferable — harus mendekati instan (bukan proporsional ke ukuran
   data).
 
-## B.4 — Storage Terkompresi untuk Chunk Jauh — ⬜ BELUM
+## B.4 — Storage Terkompresi untuk Chunk Jauh — ✅ SELESAI
+
+**Koreksi penting terhadap draf di bawah ini (ditemukan saat implementasi):**
+saran awal "downgrade ke `BrickMapStorage`/`SVDAGStorage`/`Tree64Storage`"
+**tidak applicable** ke arsitektur SDF yang dibangun sejak Fase 0 — ketiga
+storage itu menyimpan material ID blocky (`Uint8`) dan **tidak implement
+`getSDF()`/`setSDF()` sama sekali**. `SurfaceNetsMesher._getSDF()` memanggil
+`storage.getSDF()` tanpa fallback, jadi memasang storage itu ke chunk yang
+di-mesh smooth akan **crash**, bukan sekadar kurang detail.
+
+Solusi yang benar-benar dipakai: `QuantizedSDFStorage` (baru,
+`src/core/voxel/QuantizedSDFStorage.js`) — drop-in replacement `SDFStorage`
+dengan interface identik persis, tapi menyimpan SDF sebagai `Int16Array`
+(skema kuantisasi clamp ke ±64 dengan presisi 1/512) alih-alih
+`Float32Array` — setengah memori per chunk, tanpa risiko crash apapun.
+Terdaftar sebagai storage id `'sdf-compact'`, dipilih otomatis untuk chunk
+di luar `DEFAULT_NEAR_STORAGE_RADIUS` (config.js) di jalur streaming.
+
+Bagian "quantize vertex GPU buffer (Int16)" dari draf asli **belum
+dikerjakan** — lebih invasif ke seluruh pipeline render dan dampak
+memorinya lebih kecil dibanding kompresi storage. Tetap terbuka sebagai
+follow-up kalau nanti dibutuhkan.
+
+---
+**Draf asli (sebagian sudah tidak akurat, dibiarkan untuk konteks sejarah):**
 
 **Prasyarat:** A.6/B.5 (LOD) mulai relevan, atau memory jadi masalah
 nyata di A.1 dengan radius besar.
