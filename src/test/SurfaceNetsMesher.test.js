@@ -216,3 +216,224 @@ describe('SurfaceNetsMesher', () => {
     });
   });
 });
+
+describe('SurfaceNetsMesher — Partial Remeshing (Roadmap B.2)', () => {
+  // Helper: ubah SATU voxel di storage sphere, lalu kembalikan koordinat
+  // lokal-nya beserta AABB cell (dengan padding sama seperti
+  // VoxelEngine._unionDirtyBounds()) supaya test bisa memanggil generateMesh
+  // dengan ctx.dirtyBounds yang REALISTIS (bukan cuma AABB penuh chunk).
+  function editVoxelAndGetDirtyBounds(storage, lx, ly, lz, newSDF) {
+    storage.setSDF(lx, ly, lz, newSDF);
+    const PADDING = 2;
+    return {
+      minX: lx - PADDING, maxX: lx + PADDING,
+      minY: ly - PADDING, maxY: ly + PADDING,
+      minZ: lz - PADDING, maxZ: lz + PADDING,
+    };
+  }
+
+  test('build pertama (tanpa dirtyBounds/previousCellCache) tetap mengembalikan cellCache untuk dipakai berikutnya', () => {
+    const mesher = new SurfaceNetsMesher();
+    const storage = makeSphereChunk();
+    const result = mesher.generateMesh(storage, { chunkCoord: [0, 0, 0] });
+
+    assert.ok(result.cellCache instanceof Map);
+    assert.ok(result.cellCache.size > 0, 'sphere SDF harus menghasilkan beberapa cell aktif');
+  });
+
+  test('build partial (dirtyBounds sempit) menghasilkan mesh yang SECARA GEOMETRIS IDENTIK dengan full rebuild', () => {
+    // Ini test PALING KRITIS untuk B.2: cache-reuse tidak boleh mengubah
+    // hasil akhir sama sekali, cuma cara menghitungnya yang beda.
+    const mesher = new SurfaceNetsMesher();
+
+    // 1. Build FULL awal (baseline, sebelum ada edit apapun).
+    const storageBefore = makeSphereChunk();
+    const initialResult = mesher.generateMesh(storageBefore, { chunkCoord: [0, 0, 0] });
+
+    // 2. Terapkan SATU edit voxel kecil dekat permukaan sphere (bukan di
+    //    tengah solid/di luar udara -- supaya benar-benar mengubah topologi
+    //    beberapa cell, bukan no-op).
+    const c = CS / 2;
+    const lx = c, ly = c, lz = Math.floor(c + CS * 0.3); // dekat permukaan +Z sphere
+    const dirtyBounds = editVoxelAndGetDirtyBounds(storageBefore, lx, ly, lz, 5.0); // jadi udara
+
+    // 3a. Build PARTIAL: pakai cellCache dari build sebelumnya + dirtyBounds sempit.
+    const partialResult = mesher.generateMesh(storageBefore, {
+      chunkCoord: [0, 0, 0],
+      dirtyBounds,
+      previousCellCache: initialResult.cellCache,
+    });
+
+    // 3b. Build FULL dari storage yang SAMA (setelah edit), sebagai ground truth.
+    const fullResult = mesher.generateMesh(storageBefore, { chunkCoord: [0, 0, 0] });
+
+    // Bandingkan sebagai HIMPUNAN posisi vertex (bukan urutan array mentah
+    // -- urutan insersi partial vs full BOLEH beda, lihat komentar di
+    // SurfaceNetsMesher.generateMesh(), yang penting geometri akhirnya
+    // sama).
+    function vertexPositionSet(vertexData) {
+      const set = new Set();
+      for (let i = 0; i < vertexData.length; i += 9) {
+        // Bulatkan supaya perbandingan floating-point stabil.
+        const key = `${vertexData[i].toFixed(4)},${vertexData[i + 1].toFixed(4)},${vertexData[i + 2].toFixed(4)}`;
+        set.add(key);
+      }
+      return set;
+    }
+
+    const partialPositions = vertexPositionSet(partialResult.vertexData);
+    const fullPositions = vertexPositionSet(fullResult.vertexData);
+
+    assert.equal(
+      partialResult.vertexData.length / 9,
+      fullResult.vertexData.length / 9,
+      'jumlah vertex partial harus SAMA PERSIS dengan full rebuild'
+    );
+    assert.deepEqual(
+      [...partialPositions].sort(),
+      [...fullPositions].sort(),
+      'himpunan posisi vertex partial harus IDENTIK dengan full rebuild (partial-rebuild tidak boleh mengubah geometri)'
+    );
+    assert.equal(
+      partialResult.indexData.length,
+      fullResult.indexData.length,
+      'jumlah index (triangle) partial harus sama dengan full rebuild'
+    );
+  });
+
+  test('build partial BENAR-BENAR melewati komputasi cell di luar dirtyBounds (bukan cuma berlabel partial)', () => {
+    // Buktikan ini genuinely partial, bukan cuma full rebuild yang diberi
+    // nama lain: cell YANG SAMA (posisi identik) di luar dirtyBounds harus
+    // memakai instance object CACHE PERSIS (sama reference), bukan
+    // dihitung ulang -- kalau dihitung ulang, hasil floating-point BISA
+    // saja identik (deterministik), jadi cara paling meyakinkan adalah
+    // membandingkan REFERENCE cellCache record-nya, bukan cuma nilainya.
+    const mesher = new SurfaceNetsMesher();
+    const storage = makeSphereChunk();
+    const initialResult = mesher.generateMesh(storage, { chunkCoord: [0, 0, 0] });
+
+    // dirtyBounds SANGAT sempit, jauh di sudut chunk -- pasti tidak overlap
+    // sebagian besar cell aktif sphere yang ada di tengah.
+    const dirtyBounds = { minX: -1, maxX: 0, minY: -1, maxY: 0, minZ: -1, maxZ: 0 };
+
+    const partialResult = mesher.generateMesh(storage, {
+      chunkCoord: [0, 0, 0],
+      dirtyBounds,
+      previousCellCache: initialResult.cellCache,
+    });
+
+    let reusedCount = 0;
+    let recomputedCount = 0;
+    for (const [key, rec] of partialResult.cellCache) {
+      if (initialResult.cellCache.get(key) === rec) {
+        reusedCount++; // reference SAMA -> dipakai ulang dari cache, tidak dihitung ulang
+      } else {
+        recomputedCount++;
+      }
+    }
+
+    assert.ok(reusedCount > 0, 'harus ada cell yang dipakai ulang langsung dari cache (reference sama)');
+    assert.ok(
+      reusedCount > recomputedCount,
+      `dengan dirtyBounds sempit di sudut chunk, mayoritas cell (${initialResult.cellCache.size} total) ` +
+        `harus dipakai ulang dari cache, bukan dihitung ulang (reused=${reusedCount}, recomputed=${recomputedCount})`
+    );
+  });
+
+  test('cell yang berubah dari AKTIF menjadi TIDAK AKTIF (mask 0/255) benar-benar hilang dari mesh partial', () => {
+    const mesher = new SurfaceNetsMesher();
+    const storage = new SDFStorage(CS, CS, CS);
+    // Isi solid PENUH kecuali satu lubang kecil di tengah (SDF negatif =
+    // solid, positif = udara) -- gampang diprediksi cell mana yang aktif.
+    for (let x = 0; x < CS; x++)
+      for (let y = 0; y < CS; y++)
+        for (let z = 0; z < CS; z++) storage.setSDF(x, y, z, -1.0);
+    const hx = CS / 2, hy = CS / 2, hz = CS / 2;
+    storage.setSDF(hx, hy, hz, 1.0); // satu voxel jadi udara -> permukaan kecil di sekitarnya
+
+    // PENTING: sediakan getNeighbor yang mengembalikan SOLID (-1.0) juga,
+    // konsisten dengan isi chunk ini -- tanpa ini, _getSDF() akan
+    // menganggap SEMUA yang di luar chunk sebagai udara (default), membuat
+    // seluruh permukaan LUAR chunk (batas solid vs "udara" di luar) ikut
+    // jadi geometri -- test ini cuma peduli pada perilaku di sekitar
+    // lubang, jadi boundary shell itu perlu dihilangkan dari persamaan.
+    const fakeSolidNeighborStorage = { getSDF: () => -1.0 };
+    const ctxBase = { chunkCoord: [0, 0, 0], getNeighbor: () => fakeSolidNeighborStorage };
+
+    const initialResult = mesher.generateMesh(storage, ctxBase);
+    assert.ok(initialResult.vertexData.length > 0, 'lubang kecil harus menghasilkan beberapa vertex permukaan');
+
+    // Tutup lagi lubangnya (kembali solid penuh) -> seharusnya TIDAK ada
+    // permukaan sama sekali di sekitar situ lagi.
+    const dirtyBounds = editVoxelAndGetDirtyBounds(storage, hx, hy, hz, -1.0);
+    const partialResult = mesher.generateMesh(storage, {
+      ...ctxBase,
+      dirtyBounds,
+      previousCellCache: initialResult.cellCache,
+    });
+
+    assert.equal(
+      partialResult.vertexData.length,
+      0,
+      'setelah lubang ditutup, tidak boleh ada vertex tersisa (termasuk dari cache lama yang seharusnya sudah tidak aktif)'
+    );
+  });
+
+  test('previousCellCache tanpa dirtyBounds (atau sebaliknya) -- fallback ke full rebuild, tidak error', () => {
+    const mesher = new SurfaceNetsMesher();
+    const storage = makeSphereChunk();
+    const initialResult = mesher.generateMesh(storage, { chunkCoord: [0, 0, 0] });
+
+    // Cuma previousCellCache tanpa dirtyBounds
+    const resultA = mesher.generateMesh(storage, {
+      chunkCoord: [0, 0, 0],
+      previousCellCache: initialResult.cellCache,
+    });
+    // Cuma dirtyBounds tanpa previousCellCache
+    const resultB = mesher.generateMesh(storage, {
+      chunkCoord: [0, 0, 0],
+      dirtyBounds: { minX: 0, maxX: 1, minY: 0, maxY: 1, minZ: 0, maxZ: 1 },
+    });
+
+    assert.equal(resultA.vertexData.length, initialResult.vertexData.length);
+    assert.equal(resultB.vertexData.length, initialResult.vertexData.length);
+  });
+
+  test('cellCache tetap valid dipakai ulang meski originChunk berubah antar build (posisi tetap benar)', () => {
+    // Cache menyimpan koordinat LOKAL (tanpa offset) -- pastikan offset
+    // BARU tetap diterapkan dengan benar ke cell yang di-reuse dari cache.
+    const mesher = new SurfaceNetsMesher();
+    const storage = makeSphereChunk();
+    const initialResult = mesher.generateMesh(storage, {
+      chunkCoord: [5, 0, 0],
+      originChunk: [0, 0, 0],
+    });
+
+    const dirtyBounds = editVoxelAndGetDirtyBounds(storage, 1, 1, 1, 5.0);
+    const partialResult = mesher.generateMesh(storage, {
+      chunkCoord: [5, 0, 0],
+      originChunk: [3, 0, 0], // origin baru -- offset chunk 5 relatif ke origin 3 beda dari sebelumnya
+      dirtyBounds,
+      previousCellCache: initialResult.cellCache,
+    });
+
+    const fullResultWithNewOrigin = mesher.generateMesh(storage, {
+      chunkCoord: [5, 0, 0],
+      originChunk: [3, 0, 0],
+    });
+
+    function vertexPositionSet(vertexData) {
+      const set = new Set();
+      for (let i = 0; i < vertexData.length; i += 9) {
+        set.add(`${vertexData[i].toFixed(4)},${vertexData[i + 1].toFixed(4)},${vertexData[i + 2].toFixed(4)}`);
+      }
+      return set;
+    }
+
+    assert.deepEqual(
+      [...vertexPositionSet(partialResult.vertexData)].sort(),
+      [...vertexPositionSet(fullResultWithNewOrigin.vertexData)].sort(),
+      'posisi vertex hasil partial (dengan origin baru) harus sama persis dengan full rebuild di origin baru yang sama'
+    );
+  });
+});

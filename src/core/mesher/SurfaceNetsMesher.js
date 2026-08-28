@@ -34,6 +34,71 @@ const DEBUG_CHUNK_PALETTE = [
 const DEBUG_EDGE_COLOR = [1.0, 1.0, 1.0];
 
 /**
+ * Roadmap B.2 -- buffer Float32 yang tumbuh sendiri (dobel kapasitas saat
+ * penuh), dipakai untuk vertexData alih-alih push() ke Array biasa lalu
+ * di-convert ke Float32Array di akhir. Menghindari boxed-number overhead
+ * dari Array JS biasa DAN alokasi ganda (array + typed array konversi) --
+ * cuma ada satu alokasi tambahan (grow, jarang terjadi) plus satu slice()
+ * final ke ukuran pas.
+ */
+class GrowableFloat32 {
+  constructor(initialCapacity = 2048) {
+    this.buffer = new Float32Array(initialCapacity);
+    this.count = 0; // jumlah FLOAT tersimpan (bukan jumlah vertex)
+  }
+  _ensure(extra) {
+    if (this.count + extra <= this.buffer.length) return;
+    let newCap = this.buffer.length * 2 || 16;
+    while (newCap < this.count + extra) newCap *= 2;
+    const next = new Float32Array(newCap);
+    next.set(this.buffer.subarray(0, this.count));
+    this.buffer = next;
+  }
+  push9(a, b, c, d, e, f, g, h, i) {
+    this._ensure(9);
+    const buf = this.buffer, n = this.count;
+    buf[n] = a; buf[n + 1] = b; buf[n + 2] = c;
+    buf[n + 3] = d; buf[n + 4] = e; buf[n + 5] = f;
+    buf[n + 6] = g; buf[n + 7] = h; buf[n + 8] = i;
+    this.count += 9;
+  }
+  toFinalArray() {
+    return this.buffer.slice(0, this.count);
+  }
+}
+
+/** Sama seperti GrowableFloat32, tapi untuk indexData (integer, per-quad). */
+class GrowableUint32 {
+  constructor(initialCapacity = 4096) {
+    this.buffer = new Uint32Array(initialCapacity);
+    this.count = 0;
+  }
+  _ensure(extra) {
+    if (this.count + extra <= this.buffer.length) return;
+    let newCap = this.buffer.length * 2 || 16;
+    while (newCap < this.count + extra) newCap *= 2;
+    const next = new Uint32Array(newCap);
+    next.set(this.buffer.subarray(0, this.count));
+    this.buffer = next;
+  }
+  push6(a, b, c, d, e, f) {
+    this._ensure(6);
+    const buf = this.buffer, n = this.count;
+    buf[n] = a; buf[n + 1] = b; buf[n + 2] = c;
+    buf[n + 3] = d; buf[n + 4] = e; buf[n + 5] = f;
+    this.count += 6;
+  }
+  toUint16Array() {
+    const out = new Uint16Array(this.count);
+    for (let i = 0; i < this.count; i++) out[i] = this.buffer[i];
+    return out;
+  }
+  toUint32Array() {
+    return this.buffer.slice(0, this.count);
+  }
+}
+
+/**
  * Implementasi Surface Nets untuk menghasilkan smooth mesh dari data SDF.
  */
 export class SurfaceNetsMesher extends VoxelMesher {
@@ -156,9 +221,6 @@ export class SurfaceNetsMesher extends VoxelMesher {
       offsetZ = (ctx.chunkCoord[2] - oz) * dims[2];
     }
 
-    const vertexData = [];
-    const indices = [];
-
     // Map untuk melacak index vertex dari setiap cell
     // Menyederhanakan penjahitan (stitching) wajah quad
     const cellVertices = new Map();
@@ -168,7 +230,82 @@ export class SurfaceNetsMesher extends VoxelMesher {
     const debugChunkBounds = !!(ctx && ctx.debugChunkBounds);
     const debugTint = debugChunkBounds ? this._chunkDebugTint(ctx.chunkCoord) : null;
 
+    // Roadmap B.2 -- Partial Remeshing.
+    //
+    // Pass 1 (di bawah) adalah bagian termahal dari mesher ini: tiap cell
+    // butuh 8x _getSDF (corner) DAN, kalau cell-nya aktif, sampai 6x
+    // _getSDFTrilinear (masing-masing 8x _getSDF lagi) untuk normal
+    // gradient -- total puluhan pembacaan SDF per cell aktif. Untuk satu
+    // edit voxel kecil di tengah chunk besar, hampir semua cell TIDAK
+    // terpengaruh sama sekali oleh edit itu, tapi tanpa caching tetap
+    // dihitung ulang dari nol tiap remesh.
+    //
+    // Kalau caller (VoxelEngine.remeshChunk(), lihat komentar di sana)
+    // menyediakan `ctx.dirtyBounds` (AABB cell, dalam ruang koordinat cell
+    // yang SAMA dengan loop di bawah ini: -1..dims-1) DAN
+    // `ctx.previousCellCache` (hasil `cellCache` dari build SEBELUMNYA
+    // untuk chunk yang SAMA), Pass 1 cukup menghitung ulang cell yang ada
+    // di dalam `dirtyBounds` -- cell di luar itu dipakai ulang langsung
+    // dari cache, melewati SEMUA pembacaan SDF untuk cell tersebut.
+    //
+    // Kalau salah satu tidak diberikan (mis. build pertama untuk chunk
+    // ini, atau VoxelEngine sengaja minta full rebuild lewat
+    // `chunk.forceFullRemesh` -- dipakai saat chunk ini jadi TETANGGA dari
+    // edit/chunk-baru, bukan yang diedit langsung, sehingga AABB tepat
+    // tidak diketahui), jalur di bawah otomatis menghitung SEMUA cell
+    // seperti sebelumnya -- 100% backward compatible untuk caller yang
+    // tidak tahu-menahu soal field ctx ini (editor, benchmark, test lama).
+    //
+    // PENTING soal urutan: Pass 2 selalu mencari index vertex lewat
+    // `cellVertices.get(key)`, TIDAK PERNAH mengasumsikan urutan insersi
+    // tertentu -- jadi cell yang di-seed dari cache (index vertex BARU,
+    // beda dari build sebelumnya) tetap menghasilkan mesh yang benar.
+    // Untuk build FULL (canPartial === false), fase seed di bawah
+    // dilewati seluruhnya sehingga urutan insersi Pass 1 IDENTIK dengan
+    // sebelum perubahan ini -- refactor ini tidak mengubah output apapun
+    // untuk jalur non-partial.
+    const canPartial = !!(ctx && ctx.dirtyBounds && ctx.previousCellCache);
+    const dirtyMinX = canPartial ? Math.max(-1, ctx.dirtyBounds.minX) : -1;
+    const dirtyMinY = canPartial ? Math.max(-1, ctx.dirtyBounds.minY) : -1;
+    const dirtyMinZ = canPartial ? Math.max(-1, ctx.dirtyBounds.minZ) : -1;
+    const dirtyMaxX = canPartial ? Math.min(dims[0] - 1, ctx.dirtyBounds.maxX) : dims[0] - 1;
+    const dirtyMaxY = canPartial ? Math.min(dims[1] - 1, ctx.dirtyBounds.maxY) : dims[1] - 1;
+    const dirtyMaxZ = canPartial ? Math.min(dims[2] - 1, ctx.dirtyBounds.maxZ) : dims[2] - 1;
+
+    const inDirtyRange = (x, y, z) =>
+      x >= dirtyMinX && x <= dirtyMaxX &&
+      y >= dirtyMinY && y <= dirtyMaxY &&
+      z >= dirtyMinZ && z <= dirtyMaxZ;
+
+    const vbuf = new GrowableFloat32();
+    // cellCache: HASIL build ini (koordinat LOKAL, tanpa offsetX/Y/Z --
+    // supaya tetap valid dipakai ulang meski originChunk berubah di build
+    // berikutnya, lihat VoxelEngine.remeshChunk()). Dikembalikan ke
+    // VoxelEngine untuk dipersist sebagai `chunk.cellCache`, jadi input
+    // `ctx.previousCellCache` untuk remesh partial berikutnya.
+    const cellCache = new Map();
+
+    if (canPartial) {
+      // Seed dari cache: pakai ulang SEMUA cell aktif dari build
+      // sebelumnya yang BUKAN ada di dalam dirtyBounds (yang di dalam akan
+      // dihitung ulang fresh di loop bawah).
+      for (const [key, rec] of ctx.previousCellCache) {
+        const [cxk, cyk, czk] = key.split(',').map(Number);
+        if (inDirtyRange(cxk, cyk, czk)) continue;
+        const vIndex = vbuf.count / 9;
+        vbuf.push9(
+          rec.vx + offsetX, rec.vy + offsetY, rec.vz + offsetZ,
+          rec.nx, rec.ny, rec.nz,
+          rec.r, rec.g, rec.b
+        );
+        cellVertices.set(key, vIndex);
+        cellCache.set(key, rec);
+      }
+    }
+
     // Pass 1: Identifikasi permukaan dan hitung posisi vertex tiap cell
+    // dalam rentang [dirtyMin..dirtyMax] (seluruh chunk untuk build full,
+    // atau cuma area yang berubah untuk build partial).
     //
     // Loop di sini SENGAJA dimulai dari -1 (bukan 0), memberi "padding" 1 sel
     // ke arah negatif. Alasannya: Pass 2 (stitching) butuh vertex dari cell
@@ -179,9 +316,9 @@ export class SurfaceNetsMesher extends VoxelMesher {
     // ini disampling dari data tetangga lewat ctx.getNeighbor (SDF-nya sama
     // persis dengan yang dipakai neighbor chunk itu sendiri), jadi posisinya
     // konsisten dan tidak menimbulkan seam baru.
-    for (let z = -1; z < dims[2]; z++) {
-      for (let y = -1; y < dims[1]; y++) {
-        for (let x = -1; x < dims[0]; x++) {
+    for (let z = dirtyMinZ; z <= dirtyMaxZ; z++) {
+      for (let y = dirtyMinY; y <= dirtyMaxY; y++) {
+        for (let x = dirtyMinX; x <= dirtyMaxX; x++) {
           
           let mask = 0;
           const cornerSDF = [];
@@ -238,20 +375,31 @@ export class SurfaceNetsMesher extends VoxelMesher {
             }
 
             // Generate vertex data yang di-interleave (Pos 3, Nor 3, Col 3 = 9 float per vertex)
-            const vIndex = vertexData.length / 9;
-            vertexData.push(
+            const key = getCellKey(x, y, z);
+            const vIndex = vbuf.count / 9;
+            vbuf.push9(
               vx + offsetX, vy + offsetY, vz + offsetZ, // Position
               norm[0], norm[1], norm[2],                // Normal
               color[0], color[1], color[2]              // Color (default gray, atau debug tint)
             );
-            
-            cellVertices.set(getCellKey(x, y, z), vIndex);
+
+            cellVertices.set(key, vIndex);
+            // Simpan LOKAL (tanpa offset) supaya cache tetap valid dipakai
+            // ulang meski originChunk (dan karenanya offsetX/Y/Z) berubah
+            // di build berikutnya.
+            cellCache.set(key, { vx, vy, vz, nx: norm[0], ny: norm[1], nz: norm[2], r: color[0], g: color[1], b: color[2] });
           }
         }
       }
     }
 
-    // Pass 2: Jahit vertex menjadi quad (lalu triangle) berdasar tepi antar cell
+    // Pass 2: Jahit vertex menjadi quad (lalu triangle) berdasar tepi antar
+    // cell. SELALU loop PENUH 0..dims-1 (tidak dibatasi dirtyBounds) --
+    // benar untuk build partial maupun full karena `cellVertices` di titik
+    // ini sudah lengkap (gabungan cache + hasil Pass 1 fresh), dan Pass 2
+    // cuma melihat SDF LIVE (bukan cache) lewat _getSDF() langsung, jadi
+    // konektivitas quad selalu akurat terhadap data terbaru.
+    const ibuf = new GrowableUint32();
     for (let z = 0; z < dims[2]; z++) {
       for (let y = 0; y < dims[1]; y++) {
         for (let x = 0; x < dims[0]; x++) {
@@ -267,9 +415,9 @@ export class SurfaceNetsMesher extends VoxelMesher {
             
             if (v1 !== undefined && v2 !== undefined && v3 !== undefined && v4 !== undefined) {
               if (s0 <= 0) {
-                indices.push(v1, v2, v3, v1, v3, v4);
+                ibuf.push6(v1, v2, v3, v1, v3, v4);
               } else {
-                indices.push(v1, v4, v3, v1, v3, v2);
+                ibuf.push6(v1, v4, v3, v1, v3, v2);
               }
             }
           }
@@ -284,9 +432,9 @@ export class SurfaceNetsMesher extends VoxelMesher {
 
             if (v1 !== undefined && v2 !== undefined && v3 !== undefined && v4 !== undefined) {
               if (s0 <= 0) {
-                indices.push(v1, v2, v3, v1, v3, v4);
+                ibuf.push6(v1, v2, v3, v1, v3, v4);
               } else {
-                indices.push(v1, v4, v3, v1, v3, v2);
+                ibuf.push6(v1, v4, v3, v1, v3, v2);
               }
             }
           }
@@ -301,9 +449,9 @@ export class SurfaceNetsMesher extends VoxelMesher {
 
             if (v1 !== undefined && v2 !== undefined && v3 !== undefined && v4 !== undefined) {
               if (s0 <= 0) {
-                indices.push(v1, v2, v3, v1, v3, v4);
+                ibuf.push6(v1, v2, v3, v1, v3, v4);
               } else {
-                indices.push(v1, v4, v3, v1, v3, v2);
+                ibuf.push6(v1, v4, v3, v1, v3, v2);
               }
             }
           }
@@ -312,10 +460,14 @@ export class SurfaceNetsMesher extends VoxelMesher {
       }
     }
 
+    const vertexCount = vbuf.count / 9;
     return {
-      vertexData: new Float32Array(vertexData),
-      indexData: (vertexData.length / 9) > 65535 ? new Uint32Array(indices) : new Uint16Array(indices),
-      indexCount: indices.length
+      vertexData: vbuf.toFinalArray(),
+      indexData: vertexCount > 65535 ? ibuf.toUint32Array() : ibuf.toUint16Array(),
+      indexCount: ibuf.count,
+      // Roadmap B.2 -- dipersist VoxelEngine sebagai chunk.cellCache, jadi
+      // input ctx.previousCellCache untuk remesh partial berikutnya.
+      cellCache,
     };
   }
 }

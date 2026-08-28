@@ -166,7 +166,18 @@ export class VoxelEngine {
       }
       const [sx, sy, sz] = this.chunkSize;
       const storage = this.storageFactory(sx, sy, sz);
-      chunk = { cx, cy, cz, storage, dirty: true, mesh: null };
+      // Roadmap B.2 -- Partial Remeshing: `cellCache` menyimpan hasil Pass 1
+      // dari build TERAKHIR (opaque, dikelola SurfaceNetsMesher -- lihat
+      // komentar di sana), `pendingDirtyBounds` adalah AABB cell yang
+      // terakumulasi dari setVoxel() sejak remesh terakhir (null = tidak
+      // ada edit langsung, atau baru saja di-reset setelah remesh), dan
+      // `forceFullRemesh` memaksa build FULL berikutnya walau
+      // pendingDirtyBounds ada (dipakai saat chunk ini jadi TETANGGA dari
+      // edit/chunk-baru, bukan yang diedit langsung -- lihat
+      // _dirtyBoundaryNeighbors()/markChunkLoaded()). Semuanya mulai null
+      // untuk chunk baru, artinya build PERTAMA selalu full (aman, tidak
+      // ada cache untuk dipakai ulang).
+      chunk = { cx, cy, cz, storage, dirty: true, mesh: null, cellCache: null, pendingDirtyBounds: null, forceFullRemesh: false };
       this.chunks.set(key, chunk);
       this.emit('chunkCreated', chunk);
     }
@@ -214,6 +225,16 @@ export class VoxelEngine {
     chunk.storage.set(lx, ly, lz, value);
     chunk.dirty = true;
 
+    // Roadmap B.2 -- Partial Remeshing: akumulasi AABB cell (dalam ruang
+    // koordinat CELL yang dipakai SurfaceNetsMesher, -1..dims-1, BUKAN
+    // ruang voxel) yang datanya benar-benar mungkin berubah akibat edit
+    // ini, supaya remesh berikutnya untuk chunk INI (bukan tetangga --
+    // lihat _dirtyBoundaryNeighbors() untuk itu) bisa membatasi Pass 1
+    // hanya ke area ini alih-alih seluruh chunk. Dipanggil SETELAH
+    // storage.set() supaya voxel barunya sudah kebaca kalau ada logic lain
+    // yang butuh itu duluan (tidak ada saat ini, tapi urutan aman).
+    this._unionDirtyBounds(chunk, lx, ly, lz);
+
     this.emit('afterVoxelEdit', { x, y, z, value });
 
     // Beritahu Mesher bahwa chunk ini 'kotor' dan harus di-rebuild
@@ -232,6 +253,41 @@ export class VoxelEngine {
     // Fix: tandai juga semua chunk tetangga (termasuk diagonal) yang
     // datanya ikut disampling oleh cell padding di sisi voxel yang diedit.
     this._dirtyBoundaryNeighbors(cx, cy, cz, lx, ly, lz);
+  }
+
+  /**
+   * Roadmap B.2 -- Partial Remeshing: satukan (union) AABB cell yang perlu
+   * dihitung ulang akibat edit voxel di (lx, ly, lz) ke dalam
+   * `chunk.pendingDirtyBounds`, dipakai `remeshChunk()` sebagai
+   * `ctx.dirtyBounds` untuk SurfaceNetsMesher.
+   *
+   * Padding: sebuah voxel di posisi v adalah SUDUT dari cell (v-1) dan cell
+   * v (cell x punya sudut di x DAN x+1) -- jadi dampak minimal ke ruang
+   * cell adalah [lx-1, lx]. Normal vertex dihitung lewat trilinear gradient
+   * (_getNormal, d=0.5) yang bisa menjangkau ~1 cell lagi dari posisi
+   * vertex. PADDING=2 dipilih generous di kedua arah supaya kedua efek itu
+   * (mapping voxel->cell DAN jangkauan gradient) pasti tercakup penuh --
+   * lebih baik sedikit boros (cell tak terpengaruh ikut dihitung ulang)
+   * daripada kurang (cell terpengaruh terlewat -> mesh salah).
+   *
+   * Beberapa edit sebelum remesh berikutnya (mis. drag-gali multi-voxel
+   * dalam 1 frame) ter-akumulasi jadi SATU AABB gabungan yang membungkus
+   * semuanya -- bukan di-reset tiap panggilan.
+   */
+  _unionDirtyBounds(chunk, lx, ly, lz) {
+    const PADDING = 2;
+    const minX = lx - PADDING, maxX = lx + PADDING;
+    const minY = ly - PADDING, maxY = ly + PADDING;
+    const minZ = lz - PADDING, maxZ = lz + PADDING;
+
+    if (!chunk.pendingDirtyBounds) {
+      chunk.pendingDirtyBounds = { minX, minY, minZ, maxX, maxY, maxZ };
+    } else {
+      const b = chunk.pendingDirtyBounds;
+      b.minX = Math.min(b.minX, minX); b.maxX = Math.max(b.maxX, maxX);
+      b.minY = Math.min(b.minY, minY); b.maxY = Math.max(b.maxY, maxY);
+      b.minZ = Math.min(b.minZ, minZ); b.maxZ = Math.max(b.maxZ, maxZ);
+    }
   }
 
   /**
@@ -261,6 +317,18 @@ export class VoxelEngine {
           const neighbor = this.getChunk(cx + dx, cy + dy, cz + dz);
           if (!neighbor) continue; // belum pernah dibuat -> tidak ada mesh stale untuk diperbaiki
           neighbor.dirty = true;
+          // Roadmap B.2 -- tetangga ini di-dirty-kan karena efek SAMPING
+          // dari edit/chunk baru di CHUNK LAIN, bukan karena diedit
+          // langsung -- kita TIDAK tahu AABB cell mana persisnya di
+          // tetangga ini yang terpengaruh (bisa di sepanjang seluruh sisi
+          // yang bersebelahan). forceFullRemesh memaksa remeshChunk()
+          // melakukan build FULL untuk tetangga ini di remesh berikutnya,
+          // bukan partial berdasar pendingDirtyBounds (yang mungkin ada
+          // dari edit LANGSUNG lain di tetangga ini pada siklus yang sama
+          // -- tanpa flag ini, partial-nya cuma akan menutupi editnya
+          // sendiri dan MELEWATKAN efek samping dari sini, seam bisa
+          // robek lagi).
+          neighbor.forceFullRemesh = true;
           if (this.mesherPlugin) {
             this.mesherPlugin.markChunkDirty(cx + dx, cy + dy, cz + dz);
           }
@@ -301,6 +369,18 @@ export class VoxelEngine {
           const neighbor = this.getChunk(cx + dx, cy + dy, cz + dz);
           if (!neighbor) continue; // belum pernah dibuat -> tidak ada mesh stale untuk diperbaiki
           neighbor.dirty = true;
+          // Roadmap B.2 -- tetangga ini di-dirty-kan karena efek SAMPING
+          // dari edit/chunk baru di CHUNK LAIN, bukan karena diedit
+          // langsung -- kita TIDAK tahu AABB cell mana persisnya di
+          // tetangga ini yang terpengaruh (bisa di sepanjang seluruh sisi
+          // yang bersebelahan). forceFullRemesh memaksa remeshChunk()
+          // melakukan build FULL untuk tetangga ini di remesh berikutnya,
+          // bukan partial berdasar pendingDirtyBounds (yang mungkin ada
+          // dari edit LANGSUNG lain di tetangga ini pada siklus yang sama
+          // -- tanpa flag ini, partial-nya cuma akan menutupi editnya
+          // sendiri dan MELEWATKAN efek samping dari sini, seam bisa
+          // robek lagi).
+          neighbor.forceFullRemesh = true;
           if (this.mesherPlugin) {
             this.mesherPlugin.markChunkDirty(cx + dx, cy + dy, cz + dz);
           }
@@ -318,26 +398,59 @@ export class VoxelEngine {
     const chunk = this.getChunk(cx, cy, cz);
     if (!chunk) return null;
 
+    // Roadmap B.2 -- Partial Remeshing: hanya minta mesher melakukan build
+    // PARTIAL kalau SEMUA syarat berikut terpenuhi:
+    //   1. Chunk ini TIDAK sedang dipaksa full rebuild (forceFullRemesh --
+    //      lihat _dirtyBoundaryNeighbors()/markChunkLoaded(): dipasang saat
+    //      chunk ini jadi TETANGGA dari edit/chunk baru, di mana AABB cell
+    //      yang terpengaruh tidak diketahui persis).
+    //   2. Ada cellCache dari build SEBELUMNYA untuk chunk ini (kalau belum
+    //      pernah di-build, tidak ada apa-apa untuk dipakai ulang).
+    //   3. Ada pendingDirtyBounds -- akumulasi AABB dari edit LANGSUNG di
+    //      chunk ini sejak remesh terakhir (lihat _unionDirtyBounds()).
+    // Kalau salah satu tidak terpenuhi (termasuk: chunk baru pertama kali
+    // di-build, originChunk/debugChunkBounds baru saja berubah sehingga
+    // SEMUA chunk didirty-kan TANPA pendingDirtyBounds -- lihat
+    // setOriginChunk()/setDebugChunkBounds()), dirtyBounds/previousCellCache
+    // dikirim sebagai null dan SurfaceNetsMesher otomatis melakukan build
+    // FULL seperti sebelumnya -- aman secara default.
+    const canPartial = !chunk.forceFullRemesh && !!chunk.cellCache && !!chunk.pendingDirtyBounds;
+
     const ctx = {
       chunkCoord: [cx, cy, cz],
       getNeighbor: (dx, dy, dz) => this.getChunk(cx + dx, cy + dy, cz + dz)?.storage ?? null,
       debugChunkBounds: this.debugChunkBounds,
       originChunk: this.originChunk,
+      dirtyBounds: canPartial ? chunk.pendingDirtyBounds : null,
+      previousCellCache: canPartial ? chunk.cellCache : null,
     };
 
     this.emit('beforeMesh', chunk);
     const result = this.mesherPlugin.generateMesh(chunk.storage, ctx);
-    
+
+    // Reset state partial-remeshing SEGERA setelah dikonsumsi (baik jalur
+    // sync maupun async di bawah) -- siklus edit berikutnya mulai bersih.
+    chunk.pendingDirtyBounds = null;
+    chunk.forceFullRemesh = false;
+
     if (result instanceof Promise) {
       chunk.dirty = false;
       result.then(meshData => {
         chunk.mesh = meshData;
+        // Mesher lain (mis. GreedyMesher lewat AsyncWorkerMesher) tidak
+        // mengembalikan cellCache sama sekali -- meshData.cellCache
+        // otomatis undefined, chunk.cellCache jadi null, dan canPartial di
+        // remesh berikutnya otomatis false (full rebuild) untuk mesher
+        // itu. Tidak ada perubahan perilaku untuk mesher selain
+        // SurfaceNetsMesher.
+        chunk.cellCache = meshData && meshData.cellCache ? meshData.cellCache : null;
         this.emit('afterMesh', { chunk, meshData });
       }).catch(e => console.error('[VoxelEngine] Error saat async meshing:', e));
       return result;
     } else {
       chunk.mesh = result;
       chunk.dirty = false;
+      chunk.cellCache = result && result.cellCache ? result.cellCache : null;
       this.emit('afterMesh', { chunk, meshData: result });
       return result;
     }
@@ -370,7 +483,19 @@ export class VoxelEngine {
    */
   setDebugChunkBounds(enabled) {
     this.debugChunkBounds = !!enabled;
-    for (const chunk of this.chunks.values()) chunk.dirty = true;
+    for (const chunk of this.chunks.values()) {
+      chunk.dirty = true;
+      // Roadmap B.2 -- warna vertex ikut di-cache per-cell (tergantung
+      // debugChunkBounds SAAT dihitung). Kalau toggle ini kebetulan
+      // terjadi di siklus yang sama dengan edit voxel langsung di sebuah
+      // chunk (pendingDirtyBounds-nya sudah terisi), remesh partial
+      // berikutnya akan memakai ulang cache LAMA (warna dari sebelum
+      // toggle) untuk cell di luar area edit -- warna jadi campur aduk
+      // (sebagian lama, sebagian baru) sampai remesh full berikutnya.
+      // Cuma cacat kosmetik di alat debug (tidak memengaruhi gameplay),
+      // tapi dihindari sepenuhnya dengan memaksa build FULL di sini.
+      chunk.forceFullRemesh = true;
+    }
   }
 
   /**

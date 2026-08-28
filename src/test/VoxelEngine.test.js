@@ -554,3 +554,180 @@ describe('VoxelEngine — remeshDirtyChunks budget & prioritas (Hardening A.5)',
     assert.equal(stillDirtyAfterFirstFrame, N - 4);
   });
 });
+
+describe('VoxelEngine — Partial Remeshing wiring (Roadmap B.2)', () => {
+  test('setVoxel mengakumulasi pendingDirtyBounds dengan padding di sekitar voxel yang diedit', () => {
+    const engine = makeEngine();
+    engine.setVoxel(3, 3, 3, 1);
+    const chunk = engine.getChunk(0, 0, 0);
+    assert.ok(chunk.pendingDirtyBounds, 'pendingDirtyBounds harus terisi setelah setVoxel');
+    const b = chunk.pendingDirtyBounds;
+    // PADDING=2 di sekitar local coord (3,3,3) -- lihat _unionDirtyBounds().
+    assert.deepEqual(b, { minX: 1, maxX: 5, minY: 1, maxY: 5, minZ: 1, maxZ: 5 });
+  });
+
+  test('beberapa setVoxel sebelum remesh ter-UNION jadi satu AABB gabungan, bukan ditimpa/direset', () => {
+    const engine = makeEngine();
+    engine.setVoxel(1, 1, 1, 1);
+    engine.setVoxel(6, 6, 6, 1);
+    const b = engine.getChunk(0, 0, 0).pendingDirtyBounds;
+    // Union dari [1-2,1+2]=[-1,3] dan [6-2,6+2]=[4,8] -> [-1,8] di tiap sumbu.
+    assert.deepEqual(b, { minX: -1, maxX: 8, minY: -1, maxY: 8, minZ: -1, maxZ: 8 });
+  });
+
+  test('remeshChunk mereset pendingDirtyBounds & forceFullRemesh setelah dikonsumsi', () => {
+    const engine = makeEngine();
+    engine.setVoxel(2, 2, 2, 1);
+    const chunk = engine.getChunk(0, 0, 0);
+    assert.ok(chunk.pendingDirtyBounds);
+
+    engine.remeshChunk(0, 0, 0);
+
+    assert.equal(chunk.pendingDirtyBounds, null, 'harus direset supaya siklus edit berikutnya mulai bersih');
+    assert.equal(chunk.forceFullRemesh, false);
+  });
+
+  test('remeshChunk mem-persist cellCache dari hasil mesher (FakeMesher tidak mengembalikannya -> tetap null, tidak error)', () => {
+    const engine = makeEngine();
+    engine.getOrCreateChunk(0, 0, 0);
+    engine.remeshChunk(0, 0, 0);
+    // FakeMesher (lihat makeEngine() di atas) tidak mengembalikan cellCache
+    // sama sekali -- pastikan wiring ini tidak error dan chunk.cellCache
+    // tetap null (bukan undefined liar), supaya canPartial di remesh
+    // berikutnya otomatis false (fallback full rebuild) untuk mesher lain.
+    assert.equal(engine.getChunk(0, 0, 0).cellCache, null);
+  });
+
+  test('_dirtyBoundaryNeighbors (dipicu setVoxel dekat batas chunk) memasang forceFullRemesh=true di tetangga', () => {
+    const engine = makeEngine();
+    engine.getOrCreateChunk(0, 0, 0);
+    const neighbor = engine.getOrCreateChunk(1, 0, 0);
+    neighbor.dirty = false;
+    neighbor.forceFullRemesh = false;
+
+    engine.setVoxel(15, 3, 3, 1); // lx=15 = sisi kanan chunk 16-lebar default
+
+    assert.equal(neighbor.dirty, true);
+    assert.equal(
+      neighbor.forceFullRemesh,
+      true,
+      'tetangga yang di-dirty-kan sebagai efek SAMPING (bukan diedit langsung) harus dipaksa full rebuild'
+    );
+  });
+
+  test('markChunkLoaded juga memasang forceFullRemesh=true di semua tetangga yang sudah ada', () => {
+    const engine = makeEngine();
+    engine.getOrCreateChunk(0, 0, 0);
+    const neighbor = engine.getOrCreateChunk(1, 0, 0);
+    neighbor.dirty = false;
+    neighbor.forceFullRemesh = false;
+
+    engine.markChunkLoaded(0, 0, 0);
+
+    assert.equal(neighbor.forceFullRemesh, true);
+  });
+
+  test('setDebugChunkBounds memasang forceFullRemesh=true di SEMUA chunk (hindari warna cache campur aduk)', () => {
+    const engine = makeEngine();
+    for (let i = 0; i < 3; i++) engine.getOrCreateChunk(i, 0, 0);
+    for (const chunk of engine.chunks.values()) chunk.forceFullRemesh = false;
+
+    engine.setDebugChunkBounds(true);
+
+    for (const chunk of engine.chunks.values()) assert.equal(chunk.forceFullRemesh, true);
+  });
+
+  describe('acceptance end-to-end dengan SurfaceNetsMesher asli', () => {
+    function makeSurfaceNetsEngine(size) {
+      const registry = new PluginRegistry();
+      registry.registerStorage('sdf', (sx, sy, sz) => new SDFStorage(sx, sy, sz));
+      registry.registerMesher('surfacenets', () => new SurfaceNetsMesher());
+      return new VoxelEngine({ registry, storage: 'sdf', mesher: 'surfacenets', chunkSize: [size, size, size] });
+    }
+
+    function fillSphere(storage, size) {
+      const c = size / 2;
+      for (let x = 0; x < size; x++)
+        for (let y = 0; y < size; y++)
+          for (let z = 0; z < size; z++) {
+            const dist = Math.sqrt((x - c) ** 2 + (y - c) ** 2 + (z - c) ** 2) - size * 0.3;
+            storage.setSDF(x, y, z, dist);
+          }
+    }
+
+    test('setelah build awal + satu edit voxel jauh dari batas chunk, remesh partial menghasilkan mesh valid & IDENTIK dengan full rebuild', () => {
+      const size = 8;
+      const engine = makeSurfaceNetsEngine(size);
+      const chunk = engine.getOrCreateChunk(0, 0, 0);
+      fillSphere(chunk.storage, size);
+      engine.remeshDirtyChunks(); // build awal (full, populates cellCache)
+      assert.ok(chunk.cellCache, 'build awal harus menghasilkan cellCache untuk dipakai partial berikutnya');
+
+      // Edit satu voxel dekat permukaan sphere, JAUH dari batas chunk
+      // (supaya tidak memicu forceFullRemesh lewat _dirtyBoundaryNeighbors).
+      const c = size / 2;
+      engine.setVoxel(c, c, Math.floor(c + size * 0.3), 0);
+      assert.ok(chunk.pendingDirtyBounds, 'edit jauh dari batas harus mengakumulasi pendingDirtyBounds (partial-eligible)');
+      assert.equal(chunk.forceFullRemesh, false, 'edit jauh dari batas TIDAK boleh memicu forceFullRemesh');
+
+      engine.remeshDirtyChunks(); // ini PARTIAL (cellCache + pendingDirtyBounds tersedia)
+
+      assert.ok(chunk.mesh.vertexData.length > 0, 'mesh setelah partial remesh tidak boleh kosong');
+      let badCount = 0;
+      for (let i = 0; i < chunk.mesh.vertexData.length; i++) {
+        if (!Number.isFinite(chunk.mesh.vertexData[i])) badCount++;
+      }
+      assert.equal(badCount, 0, 'mesh hasil partial remesh tidak boleh mengandung NaN/Infinity');
+
+      // Ground truth: full rebuild langsung dari storage yang SAMA (setelah
+      // edit yang sama). Dibandingkan sebagai HIMPUNAN posisi vertex, BUKAN
+      // array mentah -- urutan insersi partial (seed-dari-cache dulu, baru
+      // cell baru) berbeda dari urutan full (nested loop dari awal), jadi
+      // array mentah TIDAK akan sama persis walau geometrinya identik
+      // (lihat catatan yang sama di SurfaceNetsMesher.test.js).
+      const fullRebuild = new SurfaceNetsMesher().generateMesh(chunk.storage, { chunkCoord: [0, 0, 0] });
+
+      function vertexPositionSet(vertexData) {
+        const set = new Set();
+        for (let i = 0; i < vertexData.length; i += 9) {
+          set.add(`${vertexData[i].toFixed(4)},${vertexData[i + 1].toFixed(4)},${vertexData[i + 2].toFixed(4)}`);
+        }
+        return set;
+      }
+
+      assert.equal(
+        chunk.mesh.vertexData.length,
+        fullRebuild.vertexData.length,
+        'jumlah vertex hasil partial remesh (via VoxelEngine) harus sama dengan full rebuild langsung'
+      );
+      assert.deepEqual(
+        [...vertexPositionSet(chunk.mesh.vertexData)].sort(),
+        [...vertexPositionSet(fullRebuild.vertexData)].sort(),
+        'himpunan posisi vertex hasil partial remesh (via VoxelEngine, wiring end-to-end) harus identik dengan full rebuild'
+      );
+    });
+
+    test('edit voxel TEPAT di batas chunk tetap memicu full rebuild di tetangga (border stitching A.4/Fase-0 tidak rusak oleh B.2)', () => {
+      const size = 8;
+      const engine = makeSurfaceNetsEngine(size);
+      const chunkA = engine.getOrCreateChunk(0, 0, 0);
+      const chunkB = engine.getOrCreateChunk(1, 0, 0);
+      fillSphere(chunkA.storage, size);
+      fillSphere(chunkB.storage, size);
+      engine.remeshDirtyChunks(); // build awal keduanya
+
+      // Edit A tepat di sisi kanan (lx = size-1) -- harus memicu forceFullRemesh di B.
+      engine.setVoxel(size - 1, 3, 3, 1);
+      assert.equal(chunkB.forceFullRemesh, true);
+
+      engine.remeshDirtyChunks();
+
+      assert.equal(chunkB.dirty, false);
+      let badCount = 0;
+      for (let i = 0; i < chunkB.mesh.vertexData.length; i++) {
+        if (!Number.isFinite(chunkB.mesh.vertexData[i])) badCount++;
+      }
+      assert.equal(badCount, 0);
+    });
+  });
+});
