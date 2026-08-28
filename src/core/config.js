@@ -16,3 +16,19 @@ export const DEFAULT_VIEW_DISTANCE = 5;
 // acceptance test roadmap) supaya angka yang dibakar ke vertex buffer
 // tetap sangat aman kapan pun.
 export const DEFAULT_REBASE_THRESHOLD_CHUNKS = 32;
+
+// Hardening A.5 -- setOriginChunk()/setDebugChunkBounds() menandai SEMUA
+// chunk loaded dirty sekaligus. Untuk mesher 'surfacenets' (SINKRON --
+// dipakai jalur SDF/Infinite Terrain), remeshDirtyChunks() tanpa budget
+// akan membangun ulang SEMUA chunk itu dalam SATU frame -- ini frame hitch
+// yang nyata dan tumbuh sebanding dengan view distance (setiap rebase,
+// yang terjadi tiap ~DEFAULT_REBASE_THRESHOLD_CHUNKS chunk perjalanan).
+// Nilai ini membatasi berapa BANYAK chunk boleh di-remesh per frame saat
+// streaming aktif -- sisanya tetap dirty dan diproses di frame berikutnya
+// (nearest-first, lihat remeshDirtyChunks() di VoxelEngine.js), menyebar
+// biaya rebase ke banyak frame alih-alih satu lonjakan. Dipilih moderat:
+// cukup besar supaya backlog dirty tidak menumpuk tak terbatas saat
+// streaming aktif normal (chunk baru dari radius juga lewat jalur ini),
+// cukup kecil supaya tidak ada frame yang harus remesh puluhan chunk
+// sekaligus.
+export const DEFAULT_REMESH_BUDGET_PER_FRAME = 4;

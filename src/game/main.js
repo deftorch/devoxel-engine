@@ -1,5 +1,5 @@
 import { addEntity, query, addComponent } from 'bitecs';
-import { WORLD_CHUNKS, CHUNK_SX, CHUNK_SY, CHUNK_SZ, DEFAULT_VIEW_DISTANCE, DEFAULT_REBASE_THRESHOLD_CHUNKS } from '../core/config.js';
+import { WORLD_CHUNKS, CHUNK_SX, CHUNK_SY, CHUNK_SZ, DEFAULT_VIEW_DISTANCE, DEFAULT_REBASE_THRESHOLD_CHUNKS, DEFAULT_REMESH_BUDGET_PER_FRAME } from '../core/config.js';
 import {
   world,
   Position,
@@ -592,13 +592,19 @@ async function main() {
 
       movementSystem(dt);
 
+      // Hardening A.5: pcx/pcz dihitung di sini (bukan cuma di dalam blok
+      // chunkStreamer) supaya bisa dipakai juga sebagai priorityOrigin
+      // untuk remeshDirtyChunks() di FASE 5 di bawah, tanpa menghitung
+      // ulang Math.floor() dua kali.
+      let pcx = null, pcz = null;
+
       // Roadmap A.1 -- Chunk Streaming: hitung chunk (cx, cz) pemain saat
       // ini dan minta ChunkStreamer memutuskan load/unload HANYA kalau
       // pemain baru saja pindah chunk (streamer.update() return null kalau
       // masih di chunk yang sama -- lihat komentar di ChunkStreamer.js).
       if (chunkStreamer) {
-        const pcx = Math.floor(Position.x[player] / CHUNK_SX);
-        const pcz = Math.floor(Position.z[player] / CHUNK_SZ);
+        pcx = Math.floor(Position.x[player] / CHUNK_SX);
+        pcz = Math.floor(Position.z[player] / CHUNK_SZ);
         const delta = chunkStreamer.update(pcx, pcz);
         if (delta) {
           // Roadmap A.2: prioritaskan job generation berdasar jarak
@@ -625,7 +631,22 @@ async function main() {
       }
 
       // FASE 5: Remesh Otomatis
-      engine.remeshDirtyChunks();
+      //
+      // Hardening A.5: saat streaming aktif, batasi ke
+      // DEFAULT_REMESH_BUDGET_PER_FRAME chunk per frame, diprioritaskan
+      // nearest-first ke posisi pemain saat ini -- ini yang menyerap spike
+      // "SEMUA chunk loaded jadi dirty sekaligus" dari setOriginChunk()
+      // (rebase, lihat OriginRebase.js) tanpa jadi frame hitch, dan sebagai
+      // bonus juga membuat backlog remesh dari streaming biasa (chunk baru
+      // masuk radius) diproses dari yang paling dekat pemain dulu. Mode
+      // lain (editor/benchmark/landing, chunkStreamer null) tetap pakai
+      // perilaku lama: semua dirty langsung sekaligus, tanpa throttle --
+      // 100% tidak berubah untuk jalur itu.
+      if (chunkStreamer) {
+        engine.remeshDirtyChunks(DEFAULT_REMESH_BUDGET_PER_FRAME, { cx: pcx, cz: pcz });
+      } else {
+        engine.remeshDirtyChunks();
+      }
 
       fpsAcc += dt;
       fpsFrames++;

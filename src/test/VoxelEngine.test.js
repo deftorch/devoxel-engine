@@ -454,3 +454,103 @@ describe('VoxelEngine — setOriginChunk (Roadmap A.5)', () => {
     assert.deepEqual(engine.mesherPlugin.lastCtx.originChunk, [3, 0, 0]);
   });
 });
+
+describe('VoxelEngine — remeshDirtyChunks budget & prioritas (Hardening A.5)', () => {
+  test('tanpa budget (default), semua chunk dirty di-rebuild sekaligus -- perilaku lama tidak berubah', () => {
+    const engine = makeEngine();
+    for (let i = 0; i < 5; i++) engine.getOrCreateChunk(i, 0, 0);
+
+    const rebuilt = engine.remeshDirtyChunks();
+
+    assert.equal(rebuilt.length, 5);
+    for (const chunk of engine.chunks.values()) assert.equal(chunk.dirty, false);
+  });
+
+  test('dengan budget, hanya sejumlah `budget` chunk yang di-rebuild per panggilan', () => {
+    const engine = makeEngine();
+    for (let i = 0; i < 5; i++) engine.getOrCreateChunk(i, 0, 0);
+
+    const rebuilt = engine.remeshDirtyChunks(2);
+
+    assert.equal(rebuilt.length, 2);
+    const stillDirty = [...engine.chunks.values()].filter((c) => c.dirty).length;
+    assert.equal(stillDirty, 3, 'sisa chunk yang belum di-remesh harus tetap dirty untuk panggilan berikutnya');
+  });
+
+  test('backlog dirty akhirnya habis setelah beberapa panggilan budget berturut-turut (simulasi beberapa frame)', () => {
+    const engine = makeEngine();
+    for (let i = 0; i < 10; i++) engine.getOrCreateChunk(i, 0, 0);
+
+    let totalRebuilt = 0;
+    for (let frame = 0; frame < 10; frame++) {
+      totalRebuilt += engine.remeshDirtyChunks(3, { cx: 0, cz: 0 }).length;
+    }
+
+    assert.equal(totalRebuilt, 10, 'total chunk yang di-rebuild across semua frame harus sama dengan jumlah chunk');
+    for (const chunk of engine.chunks.values()) assert.equal(chunk.dirty, false);
+  });
+
+  test('dengan priorityOrigin, chunk TERDEKAT (Chebyshev) selalu di-remesh lebih dulu', () => {
+    const engine = makeEngine();
+    // Sengaja dibuat TIDAK berurutan supaya urutan Map iterasi (insertion
+    // order) tidak kebetulan sama dengan urutan jarak -- membuktikan sort
+    // prioritasnya benar-benar bekerja, bukan cuma insertion order.
+    engine.getOrCreateChunk(10, 0, 10); // jarak 10 dari origin (0,0)
+    engine.getOrCreateChunk(1, 0, 0);   // jarak 1 -- harus diproses PERTAMA
+    engine.getOrCreateChunk(5, 0, -5);  // jarak 5
+
+    const rebuilt = engine.remeshDirtyChunks(1, { cx: 0, cz: 0 });
+
+    assert.equal(rebuilt.length, 1);
+    assert.equal(rebuilt[0].cx, 1);
+    assert.equal(rebuilt[0].cz, 0);
+  });
+
+  test('tanpa priorityOrigin (budget saja), tetap membatasi jumlah tanpa error', () => {
+    const engine = makeEngine();
+    for (let i = 0; i < 4; i++) engine.getOrCreateChunk(i, 0, 0);
+
+    const rebuilt = engine.remeshDirtyChunks(2, null);
+
+    assert.equal(rebuilt.length, 2);
+  });
+
+  test('budget lebih besar dari jumlah chunk dirty -- semua tetap ter-rebuild, tidak error', () => {
+    const engine = makeEngine();
+    for (let i = 0; i < 3; i++) engine.getOrCreateChunk(i, 0, 0);
+
+    const rebuilt = engine.remeshDirtyChunks(999, { cx: 0, cz: 0 });
+
+    assert.equal(rebuilt.length, 3);
+  });
+
+  test('budget 0 -- tidak ada yang di-rebuild, semua tetap dirty', () => {
+    const engine = makeEngine();
+    for (let i = 0; i < 3; i++) engine.getOrCreateChunk(i, 0, 0);
+
+    const rebuilt = engine.remeshDirtyChunks(0, { cx: 0, cz: 0 });
+
+    assert.equal(rebuilt.length, 0);
+    for (const chunk of engine.chunks.values()) assert.equal(chunk.dirty, true);
+  });
+
+  test('acceptance: rebase (setOriginChunk) mass-dirty diserap bertahap, bukan sekali frame besar', () => {
+    // Simulasi konkret skenario yang jadi alasan fitur ini dibuat: view
+    // distance besar (banyak chunk loaded), lalu terjadi rebase yang
+    // menandai SEMUA-nya dirty sekaligus. Tanpa budget, remeshDirtyChunks()
+    // akan me-rebuild seluruhnya dalam satu panggilan (satu frame). Dengan
+    // budget, setiap panggilan (frame) hanya memproses sebagian.
+    const engine = makeEngine();
+    const N = 25;
+    for (let i = 0; i < N; i++) engine.getOrCreateChunk(i, 0, 0);
+    for (const chunk of engine.chunks.values()) chunk.dirty = false;
+
+    engine.setOriginChunk(12, 0, 0); // rebase -- semua N chunk jadi dirty lagi
+
+    const firstFrame = engine.remeshDirtyChunks(4, { cx: 12, cz: 0 });
+    assert.equal(firstFrame.length, 4, 'satu frame TIDAK boleh me-remesh semua chunk sekaligus setelah rebase');
+
+    const stillDirtyAfterFirstFrame = [...engine.chunks.values()].filter((c) => c.dirty).length;
+    assert.equal(stillDirtyAfterFirstFrame, N - 4);
+  });
+});

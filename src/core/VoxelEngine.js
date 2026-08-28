@@ -373,14 +373,59 @@ export class VoxelEngine {
     for (const chunk of this.chunks.values()) chunk.dirty = true;
   }
 
-  /** Rebuild every chunk currently marked dirty. */
-  remeshDirtyChunks() {
-    const rebuilt = [];
+  /**
+   * Rebuild every chunk currently marked dirty, opsional dibatasi ke budget
+   * per-panggilan dan diprioritaskan nearest-first.
+   *
+   * Hardening A.5: setOriginChunk()/setDebugChunkBounds() menandai SEMUA
+   * chunk loaded dirty sekaligus. Tanpa budget, panggilan
+   * remeshDirtyChunks() berikutnya (main.js render loop, sekali per frame)
+   * membangun ulang SEMUANYA secara sinkron dalam satu frame -- untuk
+   * mesher 'surfacenets' (sinkron, dipakai jalur SDF/Infinite Terrain) ini
+   * frame hitch yang nyata dan tumbuh sebanding view distance. Memberi
+   * `budget` menyebar beban yang sama ke beberapa frame: hanya `budget`
+   * chunk dirty TERDEKAT (jarak Chebyshev ke `priorityOrigin`, meniru
+   * prioritas dequeueNearest() di ChunkGenerationQueue -- Roadmap A.2) yang
+   * di-remesh per panggilan; sisanya tetap dirty dan diambil di panggilan
+   * berikutnya. Nearest-first juga berarti chunk yang benar-benar terlihat
+   * pemain diperbaiki lebih dulu daripada yang lebih jauh.
+   *
+   * Caller yang menginginkan perilaku lama (semua sekaligus, tanpa
+   * throttle -- editor, mode benchmark, test yang sudah ada) cukup tidak
+   * memberi `budget` (default Infinity) -- 100% backward compatible.
+   *
+   * @param {number} [budget=Infinity] - jumlah maksimum chunk yang di-remesh
+   *   dalam panggilan ini.
+   * @param {{cx:number, cz:number}|null} [priorityOrigin=null] - kalau
+   *   diberikan, chunk dirty diproses nearest-first (jarak Chebyshev)
+   *   sebelum budget memotong; kalau tidak, dipakai urutan iterasi Map
+   *   (lebih murah, cukup dipakai kalau budget Infinity atau urutan tidak
+   *   penting).
+   * @returns {Array} chunk yang benar-benar di-rebuild pada panggilan ini.
+   */
+  remeshDirtyChunks(budget = Infinity, priorityOrigin = null) {
+    let dirtyChunks = [];
     for (const chunk of this.chunks.values()) {
-      if (chunk.dirty) {
-        this.remeshChunk(chunk.cx, chunk.cy, chunk.cz);
-        rebuilt.push(chunk);
-      }
+      if (chunk.dirty) dirtyChunks.push(chunk);
+    }
+
+    if (priorityOrigin && dirtyChunks.length > 1) {
+      const { cx: ox, cz: oz } = priorityOrigin;
+      dirtyChunks.sort((a, b) => {
+        const da = Math.max(Math.abs(a.cx - ox), Math.abs(a.cz - oz));
+        const db = Math.max(Math.abs(b.cx - ox), Math.abs(b.cz - oz));
+        return da - db;
+      });
+    }
+
+    if (Number.isFinite(budget) && dirtyChunks.length > budget) {
+      dirtyChunks = dirtyChunks.slice(0, Math.max(0, budget));
+    }
+
+    const rebuilt = [];
+    for (const chunk of dirtyChunks) {
+      this.remeshChunk(chunk.cx, chunk.cy, chunk.cz);
+      rebuilt.push(chunk);
     }
     return rebuilt;
   }
