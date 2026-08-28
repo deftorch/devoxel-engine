@@ -133,7 +133,7 @@ thread saat chunk baru masuk.
 - Chunk yang paling dekat pemain konsisten muncul lebih dulu daripada
   chunk di tepi radius.
 
-## A.3 — Persistensi Chunk yang Diedit — ⬜ BELUM
+## A.3 — Persistensi Chunk yang Diedit — ✅ SELESAI
 
 **Prasyarat:** A.1 selesai (butuh event unload yang jelas sebagai trigger
 save).
