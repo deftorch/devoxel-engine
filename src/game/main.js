@@ -131,9 +131,24 @@ async function main() {
    * engine.markChunkLoaded() -- TITIK PEMANGGILANNYA SAMA di kedua jalur,
    * cuma window race condition-nya jadi lebih lebar untuk jalur worker
    * (lihat catatan commit A.4).
+   *
+   * Hotfix race condition (Roadmap A.3): kalau chunk ini di-unload SAAT
+   * `await chunkPersistenceStore.load()` masih berjalan, lalu di-load ULANG
+   * (cx,cz sama) sebelum lookup itu selesai, `engine.getChunk(cx,0,cz)`
+   * setelah await akan mengembalikan chunk yang BARU (dari load kedua) --
+   * BUKAN null! Guard lama (`if (!chunk) return`) tidak menangkap kasus
+   * ini sama sekali, jadi hasil lookup BASI (dari upaya load PERTAMA) bisa
+   * ke-apply ke chunk yang salah (yang sedang diproses upaya load KEDUA),
+   * menimpa apapun yang sedang terjadi di sana. Fix: `getOrCreateChunk()`
+   * SELALU membuat object literal BARU untuk chunk yang baru dibuat
+   * (identitas berubah setiap unload+reload), jadi menyimpan REFERENCE
+   * chunk di awal (`originalChunk`) dan membandingkannya dengan `===`
+   * setelah `await` (bukan cuma cek non-null) cukup untuk mendeteksi
+   * "apakah ini masih upaya load YANG SAMA" -- tanpa perlu bookkeeping
+   * token/generation-counter terpisah.
    */
   async function loadStreamedChunk(cx, cz, storageType, terrainType, priorityDistance) {
-    engine.getOrCreateChunk(cx, 0, cz);
+    const originalChunk = engine.getOrCreateChunk(cx, 0, cz);
 
     if (chunkPersistenceStore) {
       let savedStorage = null;
@@ -146,12 +161,13 @@ async function main() {
         console.warn(`[main] Gagal memuat data tersimpan chunk (${cx},0,${cz}), generate ulang:`, err);
       }
       if (savedStorage) {
-        // Chunk bisa saja sudah di-unload lagi (pemain jalan cepat) tepat
-        // selama kita menunggu IndexedDB -- cek ulang, jangan
-        // getOrCreateChunk() (akan diam-diam menghidupkan lagi chunk yang
-        // sudah sengaja di-unload).
+        // Bandingkan REFERENCE (bukan cuma non-null) -- lihat catatan
+        // "Hotfix race condition" di atas. Chunk yang di-unload lalu
+        // di-load ulang selama await ini akan punya IDENTITAS BARU;
+        // hasil lookup basi ini harus dibuang, bukan diterapkan ke
+        // upaya load yang lain.
         const chunk = engine.getChunk(cx, 0, cz);
-        if (!chunk) return;
+        if (chunk !== originalChunk) return;
 
         chunk.storage = savedStorage;
         chunk.dirty = true;
@@ -169,13 +185,14 @@ async function main() {
       .then((storagePayload) => {
         if (!storagePayload) return; // dibatalkan: chunk ini sudah di-unload lagi sebelum worker selesai
 
-        // Chunk bisa saja sudah di-unload lagi (pemain jalan cepat bolak-
-        // balik lewat batas radius) tepat di antara resolve() promise ini
-        // dan baris berikut -- cek lagi di engine.chunks, JANGAN pakai
-        // getOrCreateChunk() di sini (itu akan diam-diam menghidupkan lagi
-        // chunk yang sudah sengaja di-unload).
+        // Sama seperti guard di cabang persistence di atas: bandingkan
+        // REFERENCE, bukan cuma non-null -- chunk bisa saja sudah
+        // di-unload lalu di-load ULANG (identitas object baru) tepat di
+        // antara resolve() promise ini dan baris berikut. JANGAN pakai
+        // getOrCreateChunk() di sini (itu akan diam-diam menghidupkan
+        // lagi chunk yang sudah sengaja di-unload).
         const chunk = engine.getChunk(cx, 0, cz);
-        if (!chunk) return;
+        if (chunk !== originalChunk) return;
 
         chunk.storage = deserializeStorage(storagePayload);
         chunk.dirty = true;
