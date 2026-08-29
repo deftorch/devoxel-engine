@@ -666,6 +666,142 @@ describe('VoxelEngine — remeshDirtyChunks budget & prioritas (Hardening A.5)',
   });
 });
 
+describe('VoxelEngine — countDirtyChunks (Hotfix Hardening A.5)', () => {
+  test('menghitung jumlah chunk dirty dengan benar', () => {
+    const engine = makeEngine();
+    for (let i = 0; i < 5; i++) engine.getOrCreateChunk(i, 0, 0);
+    assert.equal(engine.countDirtyChunks(), 5, 'chunk baru selalu mulai dirty=true');
+
+    engine.remeshChunk(0, 0, 0);
+    engine.remeshChunk(1, 0, 0);
+    assert.equal(engine.countDirtyChunks(), 3);
+  });
+
+  test('tidak mengubah state apapun (murni menghitung, bukan memproses)', () => {
+    const engine = makeEngine();
+    for (let i = 0; i < 3; i++) engine.getOrCreateChunk(i, 0, 0);
+    engine.countDirtyChunks();
+    engine.countDirtyChunks();
+    assert.equal(engine.countDirtyChunks(), 3, 'panggilan berulang tidak boleh mengubah apapun');
+    for (const chunk of engine.chunks.values()) assert.equal(chunk.dirty, true);
+  });
+});
+
+describe('VoxelEngine — reproduksi bug starvation & fix forceAfterSkips (Hotfix Hardening A.5)', () => {
+  // Reproduksi PERSIS laporan screenshot pemain: dunia streaming radius
+  // besar, pemain terus-menerus berjalan MENJAUH dari backlog dirty awal
+  // (mis. hasil streaming radius besar di awal) sambil chunk BARU terus
+  // masuk dekat posisi pemain SAAT INI. Dipakai `engine.remeshDirtyChunks()`
+  // SUNGGUHAN (bukan re-implementasi logic di test) supaya benar-benar
+  // menguji kode produksi, bukan model terpisah yang bisa diam-diam
+  // menyimpang dari implementasi asli.
+  function simulateContinuousWalking({ initialBacklogSize, newChunksPerFrame, budget, forceAfterSkips, framesToSimulate }) {
+    const engine = makeEngine();
+    // Backlog awal: representasi "baru selesai streaming radius besar",
+    // semuanya dirty, terkonsentrasi di x=0..initialBacklogSize-1.
+    for (let i = 0; i < initialBacklogSize; i++) engine.getOrCreateChunk(i, 0, 0);
+
+    // Pemain lalu berjalan jauh MENINGGALKAN area itu -- area baru dimulai
+    // ribuan chunk lebih jauh, supaya jarak backlog awal ke posisi pemain
+    // tidak pernah kecil lagi setelah frame pertama (meniru "pemain jalan
+    // terus, tidak pernah balik ke area awal").
+    let nextNewIndex = initialBacklogSize + 1000;
+
+    for (let frame = 0; frame < framesToSimulate; frame++) {
+      const playerX = nextNewIndex;
+      for (let k = 0; k < newChunksPerFrame; k++) {
+        engine.getOrCreateChunk(nextNewIndex, 0, 0); // chunk baru selalu mulai dirty=true
+        nextNewIndex++;
+      }
+      engine.remeshDirtyChunks(budget, { cx: playerX, cz: 0 }, forceAfterSkips);
+    }
+
+    // Berapa banyak dari backlog AWAL yang MASIH dirty di akhir simulasi.
+    let stillDirty = 0;
+    for (let i = 0; i < initialBacklogSize; i++) {
+      if (engine.getChunk(i, 0, 0).dirty) stillDirty++;
+    }
+    return stillDirty;
+  }
+
+  test('BUG (forceAfterSkips dinonaktifkan via Infinity): backlog awal starvation PERMANEN saat chunk baru terus mengalir lebih deras dari budget', () => {
+    const stillDirty = simulateContinuousWalking({
+      initialBacklogSize: 40,
+      newChunksPerFrame: 6, // arus baru LEBIH DERAS dari budget -> selalu menang nearest-first
+      budget: 4,
+      forceAfterSkips: Infinity, // matikan mekanisme fix -- reproduksi bug lama persis
+      framesToSimulate: 50,
+    });
+
+    // Dibiarkan sebagai bukti nyata: TANPA forced-inclusion, backlog awal
+    // TIDAK PERNAH tersentuh sama sekali walau sudah 50 panggilan
+    // (setara 50 frame) -- starvation permanen, bukan cuma lambat.
+    assert.equal(
+      stillDirty,
+      40,
+      'test ini SENGAJA mereproduksi bug lama: tanpa forceAfterSkips, backlog awal starvation total'
+    );
+  });
+
+  test('FIX: dengan forceAfterSkips (default), backlog awal WAJIB habis dalam frame yang TERUKUR, walau arus chunk baru sama derasnya', () => {
+    const FORCE_AFTER_SKIPS = 8;
+    const stillDirty = simulateContinuousWalking({
+      initialBacklogSize: 40,
+      newChunksPerFrame: 6, // arus baru SAMA deras seperti test BUG di atas
+      budget: 4,
+      forceAfterSkips: FORCE_AFTER_SKIPS,
+      framesToSimulate: FORCE_AFTER_SKIPS + 2, // harus SUDAH habis jauh sebelum frame ke-50 yang dipakai test BUG
+    });
+
+    assert.equal(
+      stillDirty,
+      0,
+      `dengan forceAfterSkips=${FORCE_AFTER_SKIPS}, backlog awal HARUS habis total dalam ${FORCE_AFTER_SKIPS + 2} panggilan -- tidak boleh starvation walau arus chunk baru deras`
+    );
+  });
+
+  test('FIX: chunk yang di-force TIDAK menunggu lebih dari forceAfterSkips+1 panggilan (bounded wait yang presisi, bukan cuma "akhirnya beres")', () => {
+    const engine = makeEngine();
+    const chunk = engine.getOrCreateChunk(0, 0, 0);
+    // Posisi pemain SANGAT jauh dari chunk ini selamanya -- tanpa
+    // forceAfterSkips, chunk ini TIDAK PERNAH akan menang nearest-first
+    // melawan chunk baru yang terus dibuat dekat pemain tiap panggilan.
+    const FORCE_AFTER_SKIPS = 5;
+
+    // Panggilan ke-1 s.d. ke-FORCE_AFTER_SKIPS: skip counter naik dari 0
+    // ke FORCE_AFTER_SKIPS (belum >= ambang SAAT dievaluasi di panggilan
+    // itu -- baru mencapai ambang PERSIS setelah panggilan ke-N selesai),
+    // jadi chunk selalu kalah bersaing dan TETAP dirty di seluruh rentang
+    // ini.
+    for (let call = 1; call <= FORCE_AFTER_SKIPS; call++) {
+      engine.getOrCreateChunk(1000 + call, 0, 0); // chunk baru, selalu lebih dekat ke playerX
+      engine.remeshDirtyChunks(1, { cx: 1000 + call, cz: 0 }, FORCE_AFTER_SKIPS);
+      assert.equal(chunk.dirty, true, `panggilan ke-${call}: belum boleh ter-remesh (skip count baru mencapai ${call}, ambang ${FORCE_AFTER_SKIPS})`);
+    }
+
+    // Panggilan ke-(FORCE_AFTER_SKIPS+1): skip counter SUDAH tepat di
+    // ambang (>= FORCE_AFTER_SKIPS) -- WAJIB ter-force sekarang, tidak
+    // boleh menunggu lebih lama lagi.
+    engine.getOrCreateChunk(1000 + FORCE_AFTER_SKIPS + 1, 0, 0);
+    engine.remeshDirtyChunks(1, { cx: 1000 + FORCE_AFTER_SKIPS + 1, cz: 0 }, FORCE_AFTER_SKIPS);
+
+    assert.equal(
+      chunk.dirty,
+      false,
+      `chunk harus sudah ter-remesh persis di panggilan ke-${FORCE_AFTER_SKIPS + 1}, bukan lebih lambat (bounded wait presisi)`
+    );
+  });
+
+  test('forceAfterSkips tidak berpengaruh kalau budget Infinity (semua langsung diproses, tidak ada yang perlu di-force)', () => {
+    const engine = makeEngine();
+    for (let i = 0; i < 5; i++) engine.getOrCreateChunk(i, 0, 0);
+
+    const rebuilt = engine.remeshDirtyChunks(Infinity, { cx: 0, cz: 0 }, 1); // forceAfterSkips=1 (sangat agresif) tapi budget tak terbatas
+
+    assert.equal(rebuilt.length, 5, 'budget Infinity harus tetap memproses semua sekaligus seperti biasa');
+  });
+});
+
 describe('VoxelEngine — Partial Remeshing wiring (Roadmap B.2)', () => {
   test('setVoxel mengakumulasi pendingDirtyBounds dengan padding di sekitar voxel yang diedit', () => {
     const engine = makeEngine();

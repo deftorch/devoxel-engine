@@ -1,5 +1,5 @@
 import { addEntity, query, addComponent } from 'bitecs';
-import { WORLD_CHUNKS, CHUNK_SX, CHUNK_SY, CHUNK_SZ, DEFAULT_VIEW_DISTANCE, DEFAULT_REBASE_THRESHOLD_CHUNKS, DEFAULT_REMESH_BUDGET_PER_FRAME, DEFAULT_NEAR_STORAGE_RADIUS } from '../core/config.js';
+import { WORLD_CHUNKS, CHUNK_SX, CHUNK_SY, CHUNK_SZ, DEFAULT_VIEW_DISTANCE, DEFAULT_REBASE_THRESHOLD_CHUNKS, DEFAULT_REMESH_BUDGET_PER_FRAME, DEFAULT_NEAR_STORAGE_RADIUS, DEFAULT_MAX_FRAMES_TO_CLEAR_REMESH_BACKLOG } from '../core/config.js';
 import {
   world,
   Position,
@@ -705,18 +705,28 @@ async function main() {
 
       // FASE 5: Remesh Otomatis
       //
-      // Hardening A.5: saat streaming aktif, batasi ke
-      // DEFAULT_REMESH_BUDGET_PER_FRAME chunk per frame, diprioritaskan
-      // nearest-first ke posisi pemain saat ini -- ini yang menyerap spike
-      // "SEMUA chunk loaded jadi dirty sekaligus" dari setOriginChunk()
-      // (rebase, lihat OriginRebase.js) tanpa jadi frame hitch, dan sebagai
-      // bonus juga membuat backlog remesh dari streaming biasa (chunk baru
-      // masuk radius) diproses dari yang paling dekat pemain dulu. Mode
-      // lain (editor/benchmark/landing, chunkStreamer null) tetap pakai
+      // Hardening A.5 + HOTFIX starvation (lihat catatan lengkap di
+      // VoxelEngine.remeshDirtyChunks()): budget (tetap ATAU dinamis) TIDAK
+      // CUKUP sendirian -- selama nearest-first murni dipakai, backlog lama
+      // bisa starvation PERMANEN kalau chunk baru terus mengalir lebih
+      // dekat ke pemain (dibuktikan lewat simulasi, lihat komentar di
+      // VoxelEngine.js). Jaminan sebenarnya datang dari parameter ke-3
+      // (forceAfterSkips, default 8 di VoxelEngine) -- chunk yang sudah
+      // kalah bersaing 8 kali berturut-turut WAJIB diproses, apapun
+      // jaraknya. Budget dinamis di bawah ini dipertahankan sebagai
+      // pelengkap (menyerap lonjakan besar -- mis. rebase -- lebih halus,
+      // mengurangi seberapa sering forced-inclusion terpicu), BUKAN
+      // sebagai satu-satunya jaminan anti-starvation lagi. Mode lain
+      // (editor/benchmark/landing, chunkStreamer null) tetap pakai
       // perilaku lama: semua dirty langsung sekaligus, tanpa throttle --
       // 100% tidak berubah untuk jalur itu.
       if (chunkStreamer) {
-        engine.remeshDirtyChunks(DEFAULT_REMESH_BUDGET_PER_FRAME, { cx: pcx, cz: pcz });
+        const dirtyCount = engine.countDirtyChunks();
+        const dynamicBudget = Math.max(
+          DEFAULT_REMESH_BUDGET_PER_FRAME,
+          Math.ceil(dirtyCount / DEFAULT_MAX_FRAMES_TO_CLEAR_REMESH_BACKLOG)
+        );
+        engine.remeshDirtyChunks(dynamicBudget, { cx: pcx, cz: pcz }, DEFAULT_MAX_FRAMES_TO_CLEAR_REMESH_BACKLOG);
       } else {
         engine.remeshDirtyChunks();
       }

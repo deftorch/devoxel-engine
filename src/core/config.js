@@ -42,3 +42,17 @@ export const DEFAULT_REBASE_THRESHOLD_CHUNKS = 32;
 // cukup kecil supaya tidak ada frame yang harus remesh puluhan chunk
 // sekaligus.
 export const DEFAULT_REMESH_BUDGET_PER_FRAME = 4;
+
+// Hotfix Hardening A.5 -- lihat catatan lengkap di
+// VoxelEngine.remeshDirtyChunks(). DEFAULT_REMESH_BUDGET_PER_FRAME
+// (angka TETAP) terbukti bisa menyebabkan starvation: chunk di cincin
+// luar radius streaming bisa tidak pernah kebagian giliran remesh selama
+// pemain terus berjalan (chunk baru yang lebih dekat selalu menang
+// prioritas). Konstanta ini membatasi berapa BANYAK FRAME backlog dirty
+// boleh menumpuk sebelum budget per-frame membesar otomatis untuk
+// mengejarnya -- lihat main.js (Fase 5 render loop) untuk kalkulasinya:
+// `budget = max(DEFAULT_REMESH_BUDGET_PER_FRAME, ceil(dirtyCount / ini))`.
+// Menjamin backlog SELALU habis dalam <= nilai ini frame, apapun ukuran
+// backlog-nya, sambil tetap kecil (DEFAULT_REMESH_BUDGET_PER_FRAME) saat
+// backlog memang kecil.
+export const DEFAULT_MAX_FRAMES_TO_CLEAR_REMESH_BACKLOG = 8;

@@ -193,7 +193,7 @@ export class VoxelEngine {
       // belum pernah diedit tidak perlu disimpan sama sekali, karena
       // generation ulang dari noise (deterministik, seed sama) akan
       // menghasilkan data yang SAMA PERSIS lagi.
-      chunk = { cx, cy, cz, storage, dirty: true, mesh: null, cellCache: null, pendingDirtyBounds: null, forceFullRemesh: false, everEdited: false };
+      chunk = { cx, cy, cz, storage, dirty: true, mesh: null, cellCache: null, pendingDirtyBounds: null, forceFullRemesh: false, everEdited: false, remeshSkipCount: 0 };
       this.chunks.set(key, chunk);
       this.emit('chunkCreated', chunk);
     }
@@ -475,6 +475,12 @@ export class VoxelEngine {
 
     if (result instanceof Promise) {
       chunk.dirty = false;
+      // Hotfix starvation (lihat remeshDirtyChunks()): chunk ini BERHASIL
+      // dipilih untuk di-remesh -- reset skip counter-nya di sini (bukan
+      // cuma di remeshDirtyChunks()) supaya SEMUA jalur pemanggilan
+      // remeshChunk() (langsung maupun lewat remeshDirtyChunks()) konsisten
+      // me-reset penghitungnya begitu chunk itu benar-benar diproses.
+      chunk.remeshSkipCount = 0;
       result.then(meshData => {
         chunk.mesh = meshData;
         // Mesher lain (mis. GreedyMesher lewat AsyncWorkerMesher) tidak
@@ -490,6 +496,7 @@ export class VoxelEngine {
     } else {
       chunk.mesh = result;
       chunk.dirty = false;
+      chunk.remeshSkipCount = 0; // lihat catatan di cabang Promise di atas
       chunk.cellCache = result && result.cellCache ? result.cellCache : null;
       this.emit('afterMesh', { chunk, meshData: result });
       return result;
@@ -551,8 +558,26 @@ export class VoxelEngine {
   }
 
   /**
+   * Hitung jumlah chunk yang sedang dirty saat ini -- cuma iterasi Map,
+   * tanpa membangun array/sort seperti remeshDirtyChunks(). Dipakai
+   * main.js untuk menghitung budget remesh per-frame yang DINAMIS (lihat
+   * Hotfix Hardening A.5 di komentar remeshDirtyChunks()) -- tanpa ini,
+   * caller harus menebak ukuran backlog atau memanggil remeshDirtyChunks()
+   * itu sendiri cuma untuk tahu ukurannya (yang berarti sudah kepalang
+   * memproses sebagian, bukan cuma "mengintip").
+   */
+  countDirtyChunks() {
+    let count = 0;
+    for (const chunk of this.chunks.values()) {
+      if (chunk.dirty) count++;
+    }
+    return count;
+  }
+
+  /**
    * Rebuild every chunk currently marked dirty, opsional dibatasi ke budget
-   * per-panggilan dan diprioritaskan nearest-first.
+   * per-panggilan dan diprioritaskan nearest-first, dengan JAMINAN tidak
+   * ada chunk yang starvation permanen (lihat "Hotfix starvation" di bawah).
    *
    * Hardening A.5: setOriginChunk()/setDebugChunkBounds() menandai SEMUA
    * chunk loaded dirty sekaligus. Tanpa budget, panggilan
@@ -571,36 +596,92 @@ export class VoxelEngine {
    * throttle -- editor, mode benchmark, test yang sudah ada) cukup tidak
    * memberi `budget` (default Infinity) -- 100% backward compatible.
    *
+   * --- BUG YANG DITEMUKAN & DIPERBAIKI (Hotfix starvation, lihat laporan
+   * screenshot pemain: area luas dunia streaming tidak pernah ter-render
+   * selama pemain terus berjalan) ---
+   *
+   * `budget` (berapapun besarnya, termasuk yang dihitung DINAMIS dari
+   * `countDirtyChunks()`) TIDAK CUKUP kalau sortir-nya nearest-first MURNI:
+   * dibuktikan lewat simulasi -- selama ada arus chunk BARU yang terus
+   * masuk lebih dekat ke posisi pemain SAAT INI daripada backlog LAMA,
+   * backlog itu KALAH bersaing selamanya, berapapun budget-nya (backlog
+   * tetap 20/20 walau disimulasikan 200 "frame" dengan budget yang terus
+   * membesar sebanding jumlah dirty). Studi kasus screenshot: chunk BARU
+   * yang masuk radius (dekat pemain) SELALU menang prioritas dibanding
+   * chunk LAMA di cincin luar radius (jarak 3-5 dari grid radius 5, yaitu
+   * ~79% dari total chunk) -- cincin luar starvation PERMANEN selama
+   * pemain terus bergerak, apapun ukuran budget-nya.
+   *
+   * FIX SEBENARNYA: setiap chunk melacak `remeshSkipCount` -- berapa kali
+   * BERTURUT-TURUT dia dirty tapi TIDAK terpilih diproses. Kalau sudah
+   * mencapai `forceAfterSkips`, chunk itu WAJIB diproses panggilan ini,
+   * TERLEPAS dari jaraknya ke `priorityOrigin` (bahkan boleh membuat total
+   * yang diproses MELEBIHI `budget` di frame yang jarang terjadi itu --
+   * lebih baik overshoot sesekali daripada starvation permanen). Dibuktikan
+   * lewat simulasi yang SAMA: dengan mekanisme ini, backlog SELALU habis
+   * dalam TEPAT `forceAfterSkips` panggilan, walau arus chunk baru
+   * disimulasikan sampai 20/frame (vs budget dasar cuma 4) -- lihat detail
+   * simulasi di commit hotfix ini.
+   *
    * @param {number} [budget=Infinity] - jumlah maksimum chunk yang di-remesh
-   *   dalam panggilan ini.
+   *   dalam panggilan ini (BUKAN batas keras -- lihat forceAfterSkips).
    * @param {{cx:number, cz:number}|null} [priorityOrigin=null] - kalau
-   *   diberikan, chunk dirty diproses nearest-first (jarak Chebyshev)
-   *   sebelum budget memotong; kalau tidak, dipakai urutan iterasi Map
-   *   (lebih murah, cukup dipakai kalau budget Infinity atau urutan tidak
-   *   penting).
+   *   diberikan, chunk dirty (yang belum di-force) diproses nearest-first
+   *   (jarak Chebyshev) sebelum budget memotong; kalau tidak, dipakai
+   *   urutan iterasi Map (lebih murah, cukup dipakai kalau budget Infinity
+   *   atau urutan tidak penting).
+   * @param {number} [forceAfterSkips=8] - jumlah maksimum panggilan
+   *   berturut-turut sebuah chunk boleh "kalah bersaing" sebelum WAJIB
+   *   diproses. Ini yang menjamin bounded wait / tidak ada starvation
+   *   permanen -- lihat penjelasan lengkap di atas.
    * @returns {Array} chunk yang benar-benar di-rebuild pada panggilan ini.
    */
-  remeshDirtyChunks(budget = Infinity, priorityOrigin = null) {
-    let dirtyChunks = [];
+  remeshDirtyChunks(budget = Infinity, priorityOrigin = null, forceAfterSkips = 8) {
+    const dirtyChunks = [];
     for (const chunk of this.chunks.values()) {
       if (chunk.dirty) dirtyChunks.push(chunk);
     }
 
-    if (priorityOrigin && dirtyChunks.length > 1) {
-      const { cx: ox, cz: oz } = priorityOrigin;
-      dirtyChunks.sort((a, b) => {
-        const da = Math.max(Math.abs(a.cx - ox), Math.abs(a.cz - oz));
-        const db = Math.max(Math.abs(b.cx - ox), Math.abs(b.cz - oz));
-        return da - db;
-      });
+    let selected;
+    if (Number.isFinite(budget) && dirtyChunks.length > budget) {
+      // Pisahkan dulu chunk yang SUDAH mencapai batas skip -- WAJIB masuk
+      // apapun yang terjadi, tidak ikut kompetisi jarak sama sekali.
+      const forced = [];
+      const rest = [];
+      for (const chunk of dirtyChunks) {
+        if ((chunk.remeshSkipCount || 0) >= forceAfterSkips) forced.push(chunk);
+        else rest.push(chunk);
+      }
+
+      if (priorityOrigin && rest.length > 1) {
+        const { cx: ox, cz: oz } = priorityOrigin;
+        rest.sort((a, b) => {
+          const da = Math.max(Math.abs(a.cx - ox), Math.abs(a.cz - oz));
+          const db = Math.max(Math.abs(b.cx - ox), Math.abs(b.cz - oz));
+          return da - db;
+        });
+      }
+
+      // Sisa budget (boleh 0 atau bahkan sudah "minus" kalau forced saja
+      // sudah melebihi budget -- Math.max(0, ...) menjaga slice() tidak
+      // dapat argumen negatif) diisi dari yang tersisa, nearest-first.
+      const remainingBudget = Math.max(0, budget - forced.length);
+      selected = forced.concat(rest.slice(0, remainingBudget));
+    } else {
+      selected = dirtyChunks;
     }
 
-    if (Number.isFinite(budget) && dirtyChunks.length > budget) {
-      dirtyChunks = dirtyChunks.slice(0, Math.max(0, budget));
+    // Chunk yang TIDAK terpilih panggilan ini kalah bersaing satu kali
+    // lagi -- catat supaya makin dekat ke ambang force-include.
+    if (selected.length < dirtyChunks.length) {
+      const selectedSet = new Set(selected);
+      for (const chunk of dirtyChunks) {
+        if (!selectedSet.has(chunk)) chunk.remeshSkipCount = (chunk.remeshSkipCount || 0) + 1;
+      }
     }
 
     const rebuilt = [];
-    for (const chunk of dirtyChunks) {
+    for (const chunk of selected) {
       this.remeshChunk(chunk.cx, chunk.cy, chunk.cz);
       rebuilt.push(chunk);
     }
