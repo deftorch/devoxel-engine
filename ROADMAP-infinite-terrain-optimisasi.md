@@ -135,6 +135,14 @@ thread saat chunk baru masuk.
 
 ## A.3 — Persistensi Chunk yang Diedit — ✅ SELESAI
 
+**Update pasca-selesai:** ditemukan & diperbaiki race condition di
+`loadStreamedChunk()` (main.js) — kalau chunk di-unload SAAT lookup
+IndexedDB masih pending, lalu di-load ulang sebelum lookup itu selesai,
+hasil lookup basi bisa ke-apply ke chunk yang salah. Fix: bandingkan
+REFERENCE chunk (bukan cuma non-null) setelah `await`. Diverifikasi
+lewat skrip standalone (main.js tidak importable ke `node --test` karena
+bergantung `document`) yang membuktikan bug lama nyata DAN fix-nya benar.
+
 **Prasyarat:** A.1 selesai (butuh event unload yang jelas sebagai trigger
 save).
 
