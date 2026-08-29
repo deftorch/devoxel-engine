@@ -534,7 +534,15 @@ async function main() {
     handler: () => ({
       fps: fpsDisplay,
       chunks: chunkEntities.length,
-      workers: poolSize,
+      // Bug pre-existing (ReferenceError: `poolSize` tidak pernah
+      // dideklarasikan) -- jumlah worker generation SEKARANG memang ada di
+      // chunkGenerationPool.workers.length (Roadmap A.2), tapi cuma
+      // meaningful kalau pool-nya sudah pernah dibuat (Infinite Terrain
+      // pernah diaktifkan minimal sekali -- lihat komentar di deklarasi
+      // chunkGenerationPool). 0 dipakai saat belum ada pool sama sekali,
+      // konsisten dengan '-' yang sudah dipakai di HUD (ui.updateHUD) untuk
+      // kasus yang sama.
+      workers: chunkGenerationPool ? chunkGenerationPool.workers.length : 0,
     }),
   });
 
