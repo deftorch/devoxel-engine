@@ -226,10 +226,24 @@ jarak jauh dari `(0,0,0)`.
 - Pemain jalan ke koordinat >100,000 unit dari origin awal — tidak ada
   jitter/getaran visual pada mesh statis saat kamera diam.
 
-## A.6 — LOD Chunk Jauh (opsional, terakhir) — ⬜ BELUM
+## A.6 — LOD Chunk Jauh (opsional, terakhir) — ✅ SELESAI (tanpa profiling, atas permintaan eksplisit)
 
-**Prasyarat:** A.1–A.5 selesai dan **terbukti lewat profiling** (bukan
-asumsi) bahwa vertex count/draw call chunk jauh jadi bottleneck nyata.
+**Catatan penting:** dikerjakan meski prasyarat profiling di bawah ini
+belum terpenuhi — sandbox pengembangan ini tidak bisa menjalankan
+browser sungguhan untuk profiling. Diimplementasikan dengan hati-hati
+(scope ketat, tiap klaim diverifikasi test) tapi **belum divalidasi**
+bahwa ini benar-benar dibutuhkan/efektif di kondisi nyata. Detail
+implementasi lengkap ada di B.5 (item ini digabung ke sana, sesuai
+rencana awal).
+
+**Keterbatasan yang diketahui:** belum ada skirt/stitching geometry di
+batas transisi LOD — berpotensi ada celah visual kecil antara chunk
+resolusi penuh dan chunk LOD yang bersebelahan. Perlu diverifikasi
+visual di browser sungguhan; kalau mengganggu, ini follow-up berikutnya.
+
+**Prasyarat (belum terpenuhi saat implementasi):** A.1–A.5 selesai dan
+**terbukti lewat profiling** (bukan asumsi) bahwa vertex count/draw call
+chunk jauh jadi bottleneck nyata.
 
 **Kerjaan:** lihat detail teknis di B.5 (digabung, karena ini murni
 masalah performa, bukan lagi soal "infinite"-nya).
@@ -345,7 +359,29 @@ nyata di A.1 dengan radius besar.
 - Memory per chunk jauh terukur turun signifikan dibanding storage penuh,
   tanpa perbedaan visual yang terlihat pada jarak render itu.
 
-## B.5 — LOD untuk Chunk Jauh — ⬜ BELUM
+## B.5 — LOD untuk Chunk Jauh — ✅ SELESAI SEBAGIAN (mekanisme inti, tanpa stitching)
+
+**Yang selesai:**
+- ✅ Downsample SDF (via `ctx.cellScale` stride sampling — bukan storage
+  terpisah, lebih ringan) sebelum surface-nets. `DEFAULT_LOD_CELL_SCALE=4`.
+- ✅ Diverifikasi: vertex count turun signifikan, bounding box fisik chunk
+  tidak berubah (cuma detail berkurang), tidak ada NaN/crash.
+- ⬜ **Skema transisi antar level (skirt/stitching) — BELUM dikerjakan.**
+  Ini bagian yang paling berisiko menimbulkan celah visual di batas LOD.
+  Perlu diverifikasi manual di browser dulu — kalau celahnya terlihat
+  mengganggu, kerjakan skirt geometry (opsi lebih sederhana & rendah
+  risiko dibanding transvoxel-style stitching penuh, sesuai catatan di
+  bawah).
+
+**Acceptance Test — status:**
+- ⬜ "Radius render bisa diperbesar 2x tanpa penurunan FPS proporsional"
+  — **belum diverifikasi**, butuh profiling browser nyata.
+- ⬜ "Tidak ada gap/seam terlihat di batas transisi LOD manapun" —
+  **belum diverifikasi**, kemungkinan besar ADA celah kecil mengingat
+  belum ada stitching/skirt sama sekali.
+
+---
+**Draf asli (dipertahankan untuk konteks):**
 
 **Prasyarat:** semua di atas selesai **dan** profiling membuktikan ini
 memang bottleneck (jangan desain di awal berdasar asumsi).
