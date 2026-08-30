@@ -183,9 +183,17 @@ export class SurfaceNetsMesher extends VoxelMesher {
    * Helper untuk menghitung normal dengan gradien (turunan parsial).
    * x, y, z di sini boleh berupa koordinat PECAHAN (posisi vertex hasil
    * interpolasi edge), makanya wajib pakai _getSDFTrilinear, bukan _getSDF.
+   *
+   * @param {number} [d=0.5] - jarak sampling gradient. Default 0.5 (setengah
+   *   sel FINE, cocok untuk mesh cellScale=1) TIDAK BERUBAH dari sebelumnya
+   *   -- parameter ini murni opsional, ditambahkan untuk Roadmap A.6/B.5
+   *   (LOD): mesh yang di-generate dengan `ctx.cellScale` > 1 (lihat
+   *   generateMesh()) perlu sampling gradient pada skala yang SEPADAN
+   *   dengan ukuran cell coarse-nya (d = cellScale * 0.5), bukan tetap 0.5
+   *   fine-unit yang jadi terlalu kecil/tidak representatif untuk cell yang
+   *   jauh lebih besar.
    */
-  _getNormal(storage, ctx, x, y, z, dims) {
-    const d = 0.5; // Jarak sampling (setengah sel, cocok untuk sampler trilinear)
+  _getNormal(storage, ctx, x, y, z, dims, d = 0.5) {
     const nx =
       this._getSDFTrilinear(storage, ctx, x + d, y, z, dims) -
       this._getSDFTrilinear(storage, ctx, x - d, y, z, dims);
@@ -220,6 +228,55 @@ export class SurfaceNetsMesher extends VoxelMesher {
       offsetY = (ctx.chunkCoord[1] - oy) * dims[1];
       offsetZ = (ctx.chunkCoord[2] - oz) * dims[2];
     }
+
+    // Roadmap A.6/B.5 -- LOD Chunk Jauh. `ctx.cellScale` (default 1, 100%
+    // backward compatible) adalah berapa unit FINE (voxel storage asli)
+    // yang diwakili SATU "cell" mesher di build ini. cellScale=1 berarti
+    // 1:1 seperti sebelumnya (tidak ada perbedaan sama sekali). cellScale=2
+    // berarti mesher men-sample storage tiap 2 voxel (bukan 1), efeknya
+    // JUMLAH CELL yang diproses turun ~8x (2 per sumbu) untuk chunk yang
+    // sama -- vertex/triangle count juga turun sebanding, itulah sumber
+    // penghematan draw call & memori GPU untuk chunk jauh.
+    //
+    // PENTING soal korektnes posisi: seluruh loop di bawah bekerja dalam
+    // "ruang cell COARSE" (1 unit = cellScale voxel fine) -- setiap kali
+    // perlu koordinat FINE (untuk _getSDF/_getSDFTrilinear, yang SELALU
+    // beroperasi di ruang storage asli, tidak tahu-menahu soal cellScale),
+    // koordinat coarse dikali `cellScale`. Posisi vertex akhir HARUS dalam
+    // unit FINE juga (supaya ukuran fisik chunk di dunia tidak berubah,
+    // cuma detailnya yang lebih kasar) -- makanya interpolasi tepi di
+    // Pass 1 langsung mengalikan hasilnya dengan cellScale sebelum
+    // disimpan, bukan belakangan.
+    //
+    // `dims` di sini TETAP dims FULL RESOLUTION storage (bukan dibagi
+    // cellScale) -- cellScale cuma memengaruhi STRIDE (loncatan) sampling
+    // mesher ini sendiri terhadap storage-nya, sama sekali TIDAK mengubah
+    // bagaimana _getSDF() membaca storage atau menyeberang ke tetangga
+    // (logic neighbor-crossing di _getSDF() sudah generalisasi otomatis ke
+    // offset berapapun besarnya, selama masih 1 chunk tetangga -- lihat
+    // catatan di _getSDF()). Neighbor BOLEH punya cellScale/resolusi
+    // BERBEDA dari chunk ini -- _getSDF() tetap benar membaca nilai
+    // SDF-nya (posisi fine yang sama = nilai SDF yang sama, apapun
+    // resolusi mesh masing-masing chunk) -- yang TIDAK dijamin identik
+    // adalah POSISI VERTEX tepat di garis batas (chunk coarse cuma taruh
+    // sedikit vertex besar-besar, chunk fine taruh banyak vertex kecil-
+    // kecil), jadi ada RISIKO CELAH VISUAL KECIL di batas transisi LOD --
+    // diterima sebagai keterbatasan dulu (belum ada skirt/stitching
+    // geometry), didokumentasikan di ROADMAP sebagai follow-up.
+    //
+    // cellScale WAJIB membagi habis SEMUA dims (mis. 1, 2, 4 untuk
+    // dims default [16,40,16] -- 40/2=20, 40/4=10, keduanya integer).
+    // VoxelEngine (pemanggil) yang bertanggung jawab hanya memberi
+    // cellScale yang valid -- mesher ini tidak validasi ulang supaya tetap
+    // murni/cepat, tapi Math.floor di bawah membuat cellScale yang TIDAK
+    // membagi habis tidak crash, cuma menyisakan sedikit voxel di tepi
+    // yang tidak ter-cover mesh (degradasi anggun, bukan bug fatal).
+    const cellScale = (ctx && Number.isInteger(ctx.cellScale) && ctx.cellScale >= 1) ? ctx.cellScale : 1;
+    const coarseDims = [
+      Math.floor(dims[0] / cellScale),
+      Math.floor(dims[1] / cellScale),
+      Math.floor(dims[2] / cellScale),
+    ];
 
     // Map untuk melacak index vertex dari setiap cell
     // Menyederhanakan penjahitan (stitching) wajah quad
@@ -264,13 +321,23 @@ export class SurfaceNetsMesher extends VoxelMesher {
     // dilewati seluruhnya sehingga urutan insersi Pass 1 IDENTIK dengan
     // sebelum perubahan ini -- refactor ini tidak mengubah output apapun
     // untuk jalur non-partial.
-    const canPartial = !!(ctx && ctx.dirtyBounds && ctx.previousCellCache);
+    // Roadmap B.2 -- Partial Remeshing: SENGAJA dinonaktifkan (canPartial
+    // selalu false) untuk cellScale != 1. `dirtyBounds`/`pendingDirtyBounds`
+    // dihitung VoxelEngine dalam ruang cell FINE (padding di sekitar voxel
+    // yang diedit -- lihat _unionDirtyBounds()), tidak otomatis valid kalau
+    // diterjemahkan ke ruang cell COARSE tanpa konversi yang belum
+    // diimplementasikan. Chunk LOD (jauh dari pemain, cellScale>1) juga
+    // jarang/tidak pernah kena edit voxel langsung dalam praktiknya, jadi
+    // kehilangan optimisasi B.2 di sini dampaknya minimal -- build FULL
+    // untuk chunk coarse toh sudah jauh lebih murah (lebih sedikit cell)
+    // dibanding build FULL chunk fine, jadi B.2 kurang krusial di sini.
+    const canPartial = cellScale === 1 && !!(ctx && ctx.dirtyBounds && ctx.previousCellCache);
     const dirtyMinX = canPartial ? Math.max(-1, ctx.dirtyBounds.minX) : -1;
     const dirtyMinY = canPartial ? Math.max(-1, ctx.dirtyBounds.minY) : -1;
     const dirtyMinZ = canPartial ? Math.max(-1, ctx.dirtyBounds.minZ) : -1;
-    const dirtyMaxX = canPartial ? Math.min(dims[0] - 1, ctx.dirtyBounds.maxX) : dims[0] - 1;
-    const dirtyMaxY = canPartial ? Math.min(dims[1] - 1, ctx.dirtyBounds.maxY) : dims[1] - 1;
-    const dirtyMaxZ = canPartial ? Math.min(dims[2] - 1, ctx.dirtyBounds.maxZ) : dims[2] - 1;
+    const dirtyMaxX = canPartial ? Math.min(coarseDims[0] - 1, ctx.dirtyBounds.maxX) : coarseDims[0] - 1;
+    const dirtyMaxY = canPartial ? Math.min(coarseDims[1] - 1, ctx.dirtyBounds.maxY) : coarseDims[1] - 1;
+    const dirtyMaxZ = canPartial ? Math.min(coarseDims[2] - 1, ctx.dirtyBounds.maxZ) : coarseDims[2] - 1;
 
     const inDirtyRange = (x, y, z) =>
       x >= dirtyMinX && x <= dirtyMaxX &&
@@ -323,9 +390,13 @@ export class SurfaceNetsMesher extends VoxelMesher {
           let mask = 0;
           const cornerSDF = [];
           for (let i = 0; i < 8; i++) {
-            const cx = x + CUBE_CORNERS[i][0];
-            const cy = y + CUBE_CORNERS[i][1];
-            const cz = z + CUBE_CORNERS[i][2];
+            // Roadmap A.6/B.5 -- LOD: kalikan cellScale supaya sampling
+            // corner jatuh di koordinat FINE yang benar (lihat catatan
+            // lengkap soal cellScale di atas method ini). cellScale=1 ->
+            // identik persis dengan sebelumnya (x+offset, tidak berubah).
+            const cx = (x + CUBE_CORNERS[i][0]) * cellScale;
+            const cy = (y + CUBE_CORNERS[i][1]) * cellScale;
+            const cz = (z + CUBE_CORNERS[i][2]) * cellScale;
             const sdf = this._getSDF(chunkStorage, ctx, cx, cy, cz, dims);
             cornerSDF.push(sdf);
             if (sdf <= 0) mask |= (1 << i);
@@ -346,11 +417,14 @@ export class SurfaceNetsMesher extends VoxelMesher {
 
             // Cek apakah tepi ini memotong permukaan (perubahan sign)
             if ((s1 <= 0 && s2 > 0) || (s1 > 0 && s2 <= 0)) {
-              // Interpolasi linear di sepanjang tepi
+              // Interpolasi linear di sepanjang tepi -- dikali cellScale
+              // supaya hasilnya langsung dalam unit FINE (posisi vertex
+              // akhir, sebelum offsetX/Y/Z chunk). cellScale=1 -> identik
+              // persis dengan sebelumnya.
               const t = s1 / (s1 - s2);
-              const px = x + CUBE_CORNERS[c1][0] + t * (CUBE_CORNERS[c2][0] - CUBE_CORNERS[c1][0]);
-              const py = y + CUBE_CORNERS[c1][1] + t * (CUBE_CORNERS[c2][1] - CUBE_CORNERS[c1][1]);
-              const pz = z + CUBE_CORNERS[c1][2] + t * (CUBE_CORNERS[c2][2] - CUBE_CORNERS[c1][2]);
+              const px = (x + CUBE_CORNERS[c1][0] + t * (CUBE_CORNERS[c2][0] - CUBE_CORNERS[c1][0])) * cellScale;
+              const py = (y + CUBE_CORNERS[c1][1] + t * (CUBE_CORNERS[c2][1] - CUBE_CORNERS[c1][1])) * cellScale;
+              const pz = (z + CUBE_CORNERS[c1][2] + t * (CUBE_CORNERS[c2][2] - CUBE_CORNERS[c1][2])) * cellScale;
               vx += px; vy += py; vz += pz;
               edgeCount++;
             }
@@ -361,16 +435,20 @@ export class SurfaceNetsMesher extends VoxelMesher {
             vy /= edgeCount;
             vz /= edgeCount;
 
-            const norm = this._getNormal(chunkStorage, ctx, vx, vy, vz, dims);
+            // Roadmap A.6/B.5 -- LOD: jarak sampling gradient ikut membesar
+            // sebanding cellScale, supaya gradient diukur pada skala yang
+            // sepadan dengan ukuran cell coarse-nya (lihat komentar di
+            // _getNormal()). cellScale=1 -> d=0.5, identik persis sebelumnya.
+            const norm = this._getNormal(chunkStorage, ctx, vx, vy, vz, dims, cellScale * 0.5);
 
             // Warna vertex: default gray, atau (kalau debugChunkBounds aktif)
             // tint per-chunk + putih terang tepat di cell tepi/padding chunk
-            // (x/y/z <= 0 atau >= dims-1, termasuk cell padding -1 di atas)
-            // supaya seam antar chunk gampang diperiksa secara visual.
+            // (x/y/z <= 0 atau >= coarseDims-1, termasuk cell padding -1 di
+            // atas) supaya seam antar chunk gampang diperiksa secara visual.
             let color = [0.8, 0.8, 0.8];
             if (debugChunkBounds) {
               const atChunkBoundary =
-                x <= 0 || x >= dims[0] - 1 || y <= 0 || y >= dims[1] - 1 || z <= 0 || z >= dims[2] - 1;
+                x <= 0 || x >= coarseDims[0] - 1 || y <= 0 || y >= coarseDims[1] - 1 || z <= 0 || z >= coarseDims[2] - 1;
               color = atChunkBoundary ? DEBUG_EDGE_COLOR : debugTint;
             }
 
@@ -394,19 +472,25 @@ export class SurfaceNetsMesher extends VoxelMesher {
     }
 
     // Pass 2: Jahit vertex menjadi quad (lalu triangle) berdasar tepi antar
-    // cell. SELALU loop PENUH 0..dims-1 (tidak dibatasi dirtyBounds) --
-    // benar untuk build partial maupun full karena `cellVertices` di titik
-    // ini sudah lengkap (gabungan cache + hasil Pass 1 fresh), dan Pass 2
-    // cuma melihat SDF LIVE (bukan cache) lewat _getSDF() langsung, jadi
-    // konektivitas quad selalu akurat terhadap data terbaru.
+    // cell. SELALU loop PENUH 0..coarseDims-1 (tidak dibatasi dirtyBounds --
+    // lagipula canPartial selalu false untuk cellScale!=1, lihat catatan di
+    // atas) -- benar untuk build partial maupun full karena `cellVertices`
+    // di titik ini sudah lengkap (gabungan cache + hasil Pass 1 fresh), dan
+    // Pass 2 cuma melihat SDF LIVE (bukan cache) lewat _getSDF() langsung,
+    // jadi konektivitas quad selalu akurat terhadap data terbaru.
+    //
+    // Roadmap A.6/B.5 -- LOD: loop di ruang cell COARSE (coarseDims, bukan
+    // dims), sampling SDF dikali cellScale supaya jatuh di koordinat FINE
+    // yang benar -- sama seperti Pass 1. cellScale=1 -> coarseDims===dims,
+    // identik persis sebelumnya.
     const ibuf = new GrowableUint32();
-    for (let z = 0; z < dims[2]; z++) {
-      for (let y = 0; y < dims[1]; y++) {
-        for (let x = 0; x < dims[0]; x++) {
+    for (let z = 0; z < coarseDims[2]; z++) {
+      for (let y = 0; y < coarseDims[1]; y++) {
+        for (let x = 0; x < coarseDims[0]; x++) {
           
           // Cek tepi X (menghubungkan point ini dengan x+1)
-          const s0 = this._getSDF(chunkStorage, ctx, x, y, z, dims);
-          const sX = this._getSDF(chunkStorage, ctx, x + 1, y, z, dims);
+          const s0 = this._getSDF(chunkStorage, ctx, x * cellScale, y * cellScale, z * cellScale, dims);
+          const sX = this._getSDF(chunkStorage, ctx, (x + 1) * cellScale, y * cellScale, z * cellScale, dims);
           if ((s0 <= 0 && sX > 0) || (s0 > 0 && sX <= 0)) {
             const v1 = cellVertices.get(getCellKey(x, y, z));
             const v2 = cellVertices.get(getCellKey(x, y - 1, z));
@@ -423,7 +507,7 @@ export class SurfaceNetsMesher extends VoxelMesher {
           }
 
           // Cek tepi Y (menghubungkan point ini dengan y+1)
-          const sY = this._getSDF(chunkStorage, ctx, x, y + 1, z, dims);
+          const sY = this._getSDF(chunkStorage, ctx, x * cellScale, (y + 1) * cellScale, z * cellScale, dims);
           if ((s0 <= 0 && sY > 0) || (s0 > 0 && sY <= 0)) {
             const v1 = cellVertices.get(getCellKey(x, y, z));
             const v2 = cellVertices.get(getCellKey(x, y, z - 1));
@@ -440,7 +524,7 @@ export class SurfaceNetsMesher extends VoxelMesher {
           }
 
           // Cek tepi Z (menghubungkan point ini dengan z+1)
-          const sZ = this._getSDF(chunkStorage, ctx, x, y, z + 1, dims);
+          const sZ = this._getSDF(chunkStorage, ctx, x * cellScale, y * cellScale, (z + 1) * cellScale, dims);
           if ((s0 <= 0 && sZ > 0) || (s0 > 0 && sZ <= 0)) {
             const v1 = cellVertices.get(getCellKey(x, y, z));
             const v2 = cellVertices.get(getCellKey(x - 1, y, z));

@@ -978,3 +978,132 @@ describe('VoxelEngine — Partial Remeshing wiring (Roadmap B.2)', () => {
     });
   });
 });
+
+describe('VoxelEngine — LOD wiring via setChunkLOD (Roadmap A.6/B.5)', () => {
+  test('chunk baru mulai dengan cellScale=1 dan desiredCellScale=1 (default resolusi penuh)', () => {
+    const engine = makeEngine();
+    const chunk = engine.getOrCreateChunk(0, 0, 0);
+    assert.equal(chunk.cellScale, 1);
+    assert.equal(chunk.desiredCellScale, 1);
+  });
+
+  test('setChunkLOD mengubah desiredCellScale, TIDAK langsung mengubah cellScale (baru berubah setelah remesh)', () => {
+    const engine = makeEngine();
+    const chunk = engine.getOrCreateChunk(0, 0, 0);
+
+    engine.setChunkLOD(0, 0, 0, 4);
+
+    assert.equal(chunk.desiredCellScale, 4);
+    assert.equal(chunk.cellScale, 1, 'cellScale (skala build TERAKHIR) belum boleh berubah sebelum remesh benar-benar terjadi');
+  });
+
+  test('setChunkLOD pada chunk yang belum ada (belum getOrCreateChunk) adalah no-op aman, tidak error', () => {
+    const engine = makeEngine();
+    assert.doesNotThrow(() => engine.setChunkLOD(99, 0, 99, 2));
+  });
+
+  test('setChunkLOD dengan nilai tidak valid (0, negatif, pecahan) fallback ke 1', () => {
+    const engine = makeEngine();
+    engine.getOrCreateChunk(0, 0, 0);
+    for (const invalid of [0, -1, 1.5, NaN, undefined]) {
+      engine.setChunkLOD(0, 0, 0, invalid);
+      assert.equal(engine.getChunk(0, 0, 0).desiredCellScale, 1, `cellScale=${invalid} harus fallback ke 1`);
+    }
+  });
+
+  test('remeshChunk membakar ctx.cellScale sesuai desiredCellScale, dan memperbarui chunk.cellScale setelahnya', () => {
+    const engine = makeEngine();
+    engine.getOrCreateChunk(0, 0, 0);
+    engine.setChunkLOD(0, 0, 0, 2);
+
+    engine.remeshChunk(0, 0, 0);
+
+    assert.equal(engine.mesherPlugin.lastCtx.cellScale, 2, 'ctx.cellScale yang dikirim ke mesher harus sesuai desiredCellScale');
+    assert.equal(engine.getChunk(0, 0, 0).cellScale, 2, 'chunk.cellScale harus diperbarui setelah remesh selesai');
+  });
+
+  test('perubahan LOD (cellScale berbeda dari build terakhir) memaksa FULL rebuild, mengabaikan pendingDirtyBounds yang ada', () => {
+    const engine = makeEngine();
+    engine.setVoxel(2, 2, 2, 5); // chunk (0,0,0) dibuat + pendingDirtyBounds terisi + cellCache masih null (belum pernah di-remesh)
+    engine.remeshChunk(0, 0, 0); // build pertama di cellScale=1, cellCache sekarang ada (FakeMesher tidak mengembalikan cellCache, tapi itu OK -- fokus test ini di canPartial/ctx yang dikirim)
+
+    engine.setVoxel(3, 3, 3, 7); // edit lagi -- pendingDirtyBounds terisi lagi
+    engine.setChunkLOD(0, 0, 0, 4); // LOD berubah SEBELUM remesh berikutnya
+
+    engine.remeshChunk(0, 0, 0);
+
+    // FakeMesher.generateMesh mencatat ctx yang diterima -- dirtyBounds
+    // HARUS null (bukan partial) walau pendingDirtyBounds tadinya ada,
+    // karena lodChanging harus memaksa canPartial=false.
+    assert.equal(engine.mesherPlugin.lastCtx.dirtyBounds, null, 'perubahan LOD harus memaksa full rebuild (dirtyBounds null), bukan partial');
+  });
+
+  describe('acceptance end-to-end dengan SurfaceNetsMesher asli', () => {
+    function makeSurfaceNetsEngine(size) {
+      const registry = new PluginRegistry();
+      registry.registerStorage('sdf', (sx, sy, sz) => new SDFStorage(sx, sy, sz));
+      registry.registerMesher('surfacenets', () => new SurfaceNetsMesher());
+      return new VoxelEngine({ registry, storage: 'sdf', mesher: 'surfacenets', chunkSize: [16, 16, 16] });
+    }
+
+    function fillSphere(storage, size) {
+      const c = size / 2;
+      for (let x = 0; x < size; x++)
+        for (let y = 0; y < size; y++)
+          for (let z = 0; z < size; z++) {
+            const dist = Math.sqrt((x - c) ** 2 + (y - c) ** 2 + (z - c) ** 2) - size * 0.3;
+            storage.setSDF(x, y, z, dist);
+          }
+    }
+
+    test('chunk LOD (cellScale=4) menghasilkan mesh valid dengan JAUH LEBIH SEDIKIT vertex daripada chunk resolusi penuh yang sama', () => {
+      const size = 16;
+      const engineNear = makeSurfaceNetsEngine(size);
+      const chunkNear = engineNear.getOrCreateChunk(0, 0, 0);
+      fillSphere(chunkNear.storage, size);
+      engineNear.remeshDirtyChunks();
+
+      const engineFar = makeSurfaceNetsEngine(size);
+      const chunkFar = engineFar.getOrCreateChunk(0, 0, 0);
+      fillSphere(chunkFar.storage, size);
+      engineFar.setChunkLOD(0, 0, 0, 4);
+      engineFar.remeshDirtyChunks();
+
+      assert.ok(chunkFar.mesh.vertexData.length > 0, 'chunk LOD tetap harus menghasilkan geometri');
+      const nearVertexCount = chunkNear.mesh.vertexData.length / 9;
+      const farVertexCount = chunkFar.mesh.vertexData.length / 9;
+      assert.ok(
+        farVertexCount < nearVertexCount,
+        `chunk LOD (${farVertexCount} vertex) harus jauh lebih sedikit dari resolusi penuh (${nearVertexCount} vertex)`
+      );
+
+      let badCount = 0;
+      for (let i = 0; i < chunkFar.mesh.vertexData.length; i++) {
+        if (!Number.isFinite(chunkFar.mesh.vertexData[i])) badCount++;
+      }
+      assert.equal(badCount, 0);
+    });
+
+    test('pemain "mendekat" (LOD berubah dari cellScale=4 ke 1) menghasilkan mesh detail penuh lagi setelah remesh berikutnya', () => {
+      const size = 16;
+      const engine = makeSurfaceNetsEngine(size);
+      const chunk = engine.getOrCreateChunk(0, 0, 0);
+      fillSphere(chunk.storage, size);
+
+      engine.setChunkLOD(0, 0, 0, 4);
+      engine.remeshDirtyChunks();
+      const coarseVertexCount = chunk.mesh.vertexData.length / 9;
+
+      engine.setChunkLOD(0, 0, 0, 1); // pemain mendekat -- kembali ke resolusi penuh
+      chunk.dirty = true; // simulasikan trigger remesh (di dunia nyata dipicu logic LOD re-evaluation di main.js)
+      engine.remeshDirtyChunks();
+      const fineVertexCount = chunk.mesh.vertexData.length / 9;
+
+      assert.equal(chunk.cellScale, 1);
+      assert.ok(
+        fineVertexCount > coarseVertexCount,
+        `setelah kembali ke cellScale=1 (${fineVertexCount} vertex), harus lebih detail dari cellScale=4 (${coarseVertexCount} vertex)`
+      );
+    });
+  });
+});

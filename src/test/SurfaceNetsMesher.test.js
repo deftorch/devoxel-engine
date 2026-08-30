@@ -437,3 +437,139 @@ describe('SurfaceNetsMesher — Partial Remeshing (Roadmap B.2)', () => {
     );
   });
 });
+
+describe('SurfaceNetsMesher — LOD via ctx.cellScale (Roadmap A.6/B.5)', () => {
+  test('cellScale=1 (default) menghasilkan output IDENTIK dengan sebelum cellScale ditambahkan (regresi)', () => {
+    const mesher = new SurfaceNetsMesher();
+    const storage = makeSphereChunk(16);
+
+    const withoutCellScale = mesher.generateMesh(storage, { chunkCoord: [0, 0, 0] });
+    const withCellScale1 = mesher.generateMesh(storage, { chunkCoord: [0, 0, 0], cellScale: 1 });
+
+    assert.deepEqual(Array.from(withCellScale1.vertexData), Array.from(withoutCellScale.vertexData));
+    assert.deepEqual(Array.from(withCellScale1.indexData), Array.from(withoutCellScale.indexData));
+  });
+
+  test('cellScale=2 menghasilkan JAUH LEBIH SEDIKIT vertex daripada cellScale=1 untuk storage yang sama (bukti penghematan nyata)', () => {
+    const mesher = new SurfaceNetsMesher();
+    const storage = makeSphereChunk(16);
+
+    const fine = mesher.generateMesh(storage, { chunkCoord: [0, 0, 0], cellScale: 1 });
+    const coarse = mesher.generateMesh(storage, { chunkCoord: [0, 0, 0], cellScale: 2 });
+
+    const fineVertexCount = fine.vertexData.length / 9;
+    const coarseVertexCount = coarse.vertexData.length / 9;
+
+    assert.ok(coarseVertexCount > 0, 'cellScale=2 tetap harus menghasilkan geometri (sphere tidak boleh hilang total)');
+    assert.ok(
+      coarseVertexCount < fineVertexCount,
+      `cellScale=2 (${coarseVertexCount} vertex) harus lebih sedikit dari cellScale=1 (${fineVertexCount} vertex)`
+    );
+  });
+
+  test('ukuran fisik (bounding box) geometri SAMA antara cellScale=1 dan cellScale=2 -- LOD tidak boleh mengecilkan/membesarkan chunk', () => {
+    // Ini test PALING KRITIS untuk LOD: cellScale cuma boleh mengurangi
+    // DETAIL, bukan mengubah ukuran fisik chunk di dunia. Kalau bounding
+    // box beda, berarti ada bug scaling posisi vertex.
+    const mesher = new SurfaceNetsMesher();
+    const storage = makeSphereChunk(16);
+
+    function boundingBox(vertexData) {
+      let min = [Infinity, Infinity, Infinity];
+      let max = [-Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < vertexData.length; i += 9) {
+        for (let a = 0; a < 3; a++) {
+          min[a] = Math.min(min[a], vertexData[i + a]);
+          max[a] = Math.max(max[a], vertexData[i + a]);
+        }
+      }
+      return { min, max };
+    }
+
+    const fine = mesher.generateMesh(storage, { chunkCoord: [0, 0, 0], cellScale: 1 });
+    const coarse = mesher.generateMesh(storage, { chunkCoord: [0, 0, 0], cellScale: 2 });
+
+    const bboxFine = boundingBox(fine.vertexData);
+    const bboxCoarse = boundingBox(coarse.vertexData);
+
+    // Toleransi longgar (2 unit -- setengah dari cellScale terbesar yang
+    // diuji) karena sampling coarse SECARA INHEREN tidak menangkap detail
+    // permukaan setepat fine -- yang penting bounding box TIDAK menyusut/
+    // membesar drastis (yang menandakan bug scaling, bukan sekadar
+    // perbedaan detail permukaan).
+    for (let a = 0; a < 3; a++) {
+      assert.ok(
+        Math.abs(bboxFine.min[a] - bboxCoarse.min[a]) < 2,
+        `sisi min sumbu ${a}: fine=${bboxFine.min[a]}, coarse=${bboxCoarse.min[a]} -- beda terlalu jauh, kemungkinan bug scaling posisi`
+      );
+      assert.ok(
+        Math.abs(bboxFine.max[a] - bboxCoarse.max[a]) < 2,
+        `sisi max sumbu ${a}: fine=${bboxFine.max[a]}, coarse=${bboxCoarse.max[a]} -- beda terlalu jauh, kemungkinan bug scaling posisi`
+      );
+    }
+  });
+
+  test('geometri cellScale>1 tetap valid (tidak ada NaN/Infinity) dan offsetX/Y/Z chunk tetap diterapkan dengan benar', () => {
+    const mesher = new SurfaceNetsMesher();
+    const storage = makeSphereChunk(16);
+
+    const result = mesher.generateMesh(storage, { chunkCoord: [3, 0, -2], cellScale: 4 });
+
+    assert.ok(result.vertexData.length > 0);
+    let badCount = 0;
+    for (let i = 0; i < result.vertexData.length; i++) {
+      if (!Number.isFinite(result.vertexData[i])) badCount++;
+    }
+    assert.equal(badCount, 0, 'tidak boleh ada NaN/Infinity di geometri cellScale>1');
+
+    // Posisi X rata-rata harus di sekitar offsetX + pusat sphere LOKAL
+    // (chunkCoord[0]*dims[0] + size/2 = 3*16 + 8 = 56), BUKAN di sekitar
+    // offsetX saja (48, yang berarti bagian +size/2 hilang) atau di
+    // sekitar 48*cellScale (yang berarti offset ikut ke-scale, bug lain).
+    let sumX = 0;
+    const vertexCount = result.vertexData.length / 9;
+    for (let i = 0; i < result.vertexData.length; i += 9) sumX += result.vertexData[i];
+    const avgX = sumX / vertexCount;
+    assert.ok(avgX > 48 && avgX < 64, `posisi X rata-rata (${avgX}) harus di sekitar 56 (offset 48 + pusat sphere lokal 8), bukan ter-scale ikut cellScale`);
+  });
+
+  test('cellScale yang TIDAK membagi habis dims tidak crash (degradasi anggun, bukan exception)', () => {
+    const mesher = new SurfaceNetsMesher();
+    const storage = makeSphereChunk(16); // 16 tidak habis dibagi 3
+    assert.doesNotThrow(() => mesher.generateMesh(storage, { chunkCoord: [0, 0, 0], cellScale: 3 }));
+  });
+
+  test('cellScale tidak valid (0, negatif, pecahan, undefined) fallback ke 1 (default aman)', () => {
+    const mesher = new SurfaceNetsMesher();
+    const storage = makeSphereChunk(16);
+    const baseline = mesher.generateMesh(storage, { chunkCoord: [0, 0, 0] });
+
+    for (const invalid of [0, -1, 1.5, undefined, null, NaN]) {
+      const result = mesher.generateMesh(storage, { chunkCoord: [0, 0, 0], cellScale: invalid });
+      assert.deepEqual(
+        Array.from(result.vertexData),
+        Array.from(baseline.vertexData),
+        `cellScale=${invalid} harus fallback ke perilaku cellScale=1 (default aman), bukan crash atau perilaku aneh`
+      );
+    }
+  });
+
+  test('partial remeshing (B.2) otomatis nonaktif untuk cellScale>1 -- tidak crash walau ctx.dirtyBounds/previousCellCache diberikan', () => {
+    const mesher = new SurfaceNetsMesher();
+    const storage = makeSphereChunk(16);
+    const initial = mesher.generateMesh(storage, { chunkCoord: [0, 0, 0], cellScale: 2 });
+
+    // Coba "bujuk" partial remeshing dengan cellScale>1 -- harus DIABAIKAN
+    // (canPartial dipaksa false), full rebuild tetap terjadi, tidak crash.
+    const attempted = mesher.generateMesh(storage, {
+      chunkCoord: [0, 0, 0],
+      cellScale: 2,
+      dirtyBounds: { minX: 0, maxX: 1, minY: 0, maxY: 1, minZ: 0, maxZ: 1 },
+      previousCellCache: initial.cellCache,
+    });
+
+    assert.ok(attempted.vertexData.length > 0);
+    // Hasilnya harus SAMA seperti full rebuild biasa (bukan partial yang salah).
+    assert.deepEqual(Array.from(attempted.vertexData), Array.from(initial.vertexData));
+  });
+});

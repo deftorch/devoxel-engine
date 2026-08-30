@@ -193,7 +193,19 @@ export class VoxelEngine {
       // belum pernah diedit tidak perlu disimpan sama sekali, karena
       // generation ulang dari noise (deterministik, seed sama) akan
       // menghasilkan data yang SAMA PERSIS lagi.
-      chunk = { cx, cy, cz, storage, dirty: true, mesh: null, cellCache: null, pendingDirtyBounds: null, forceFullRemesh: false, everEdited: false, remeshSkipCount: 0 };
+      // Roadmap A.6/B.5 -- LOD: `cellScale` adalah skala yang dipakai di
+      // BUILD TERAKHIR (mulai 1 = resolusi penuh, sama seperti sebelum LOD
+      // ada), `desiredCellScale` adalah skala yang DIINGINKAN untuk build
+      // BERIKUTNYA (diset lewat setChunkLOD(), default sama dengan
+      // cellScale awal supaya tidak ada rebuild yang tidak perlu di build
+      // pertama). remeshChunk() membandingkan keduanya untuk memutuskan
+      // apakah build berikutnya WAJIB full (skala berubah, cache lama
+      // tidak valid lagi) -- lihat catatan lengkap di remeshChunk().
+      chunk = {
+        cx, cy, cz, storage, dirty: true, mesh: null, cellCache: null,
+        pendingDirtyBounds: null, forceFullRemesh: false, everEdited: false,
+        remeshSkipCount: 0, cellScale: 1, desiredCellScale: 1,
+      };
       this.chunks.set(key, chunk);
       this.emit('chunkCreated', chunk);
     }
@@ -438,15 +450,25 @@ export class VoxelEngine {
     const chunk = this.getChunk(cx, cy, cz);
     if (!chunk) return null;
 
+    // Roadmap A.6/B.5 -- LOD: kalau skala yang DIINGINKAN (desiredCellScale,
+    // lihat setChunkLOD()) beda dari skala BUILD TERAKHIR (cellScale),
+    // cache B.2 dari skala lama SAMA SEKALI TIDAK VALID untuk skala baru
+    // (cell key merepresentasikan ukuran fisik yang berbeda) -- paksa full
+    // rebuild persis seperti forceFullRemesh, TERLEPAS dari
+    // pendingDirtyBounds yang mungkin ada.
+    const lodChanging = chunk.desiredCellScale !== chunk.cellScale;
+
     // Roadmap B.2 -- Partial Remeshing: hanya minta mesher melakukan build
     // PARTIAL kalau SEMUA syarat berikut terpenuhi:
     //   1. Chunk ini TIDAK sedang dipaksa full rebuild (forceFullRemesh --
     //      lihat _dirtyBoundaryNeighbors()/markChunkLoaded(): dipasang saat
     //      chunk ini jadi TETANGGA dari edit/chunk baru, di mana AABB cell
     //      yang terpengaruh tidak diketahui persis).
-    //   2. Ada cellCache dari build SEBELUMNYA untuk chunk ini (kalau belum
+    //   2. Skala LOD TIDAK sedang berubah (lodChanging === false, lihat di
+    //      atas).
+    //   3. Ada cellCache dari build SEBELUMNYA untuk chunk ini (kalau belum
     //      pernah di-build, tidak ada apa-apa untuk dipakai ulang).
-    //   3. Ada pendingDirtyBounds -- akumulasi AABB dari edit LANGSUNG di
+    //   4. Ada pendingDirtyBounds -- akumulasi AABB dari edit LANGSUNG di
     //      chunk ini sejak remesh terakhir (lihat _unionDirtyBounds()).
     // Kalau salah satu tidak terpenuhi (termasuk: chunk baru pertama kali
     // di-build, originChunk/debugChunkBounds baru saja berubah sehingga
@@ -454,13 +476,14 @@ export class VoxelEngine {
     // setOriginChunk()/setDebugChunkBounds()), dirtyBounds/previousCellCache
     // dikirim sebagai null dan SurfaceNetsMesher otomatis melakukan build
     // FULL seperti sebelumnya -- aman secara default.
-    const canPartial = !chunk.forceFullRemesh && !!chunk.cellCache && !!chunk.pendingDirtyBounds;
+    const canPartial = !chunk.forceFullRemesh && !lodChanging && !!chunk.cellCache && !!chunk.pendingDirtyBounds;
 
     const ctx = {
       chunkCoord: [cx, cy, cz],
       getNeighbor: (dx, dy, dz) => this.getChunk(cx + dx, cy + dy, cz + dz)?.storage ?? null,
       debugChunkBounds: this.debugChunkBounds,
       originChunk: this.originChunk,
+      cellScale: chunk.desiredCellScale,
       dirtyBounds: canPartial ? chunk.pendingDirtyBounds : null,
       previousCellCache: canPartial ? chunk.cellCache : null,
     };
@@ -472,6 +495,11 @@ export class VoxelEngine {
     // sync maupun async di bawah) -- siklus edit berikutnya mulai bersih.
     chunk.pendingDirtyBounds = null;
     chunk.forceFullRemesh = false;
+    // Roadmap A.6/B.5 -- tandai skala yang BARU SAJA dipakai untuk build
+    // ini -- perbandingan lodChanging di remesh BERIKUTNYA memakai nilai
+    // ini, bukan desiredCellScale lagi (yang bisa saja sudah berubah lagi
+    // sebelum build ini selesai, terutama untuk jalur async).
+    chunk.cellScale = chunk.desiredCellScale;
 
     if (result instanceof Promise) {
       chunk.dirty = false;
@@ -555,6 +583,33 @@ export class VoxelEngine {
   setPersistenceStore(store) {
     this.persistenceStore = store || null;
     return this;
+  }
+
+  /**
+   * Roadmap A.6/B.5 -- LOD Chunk Jauh: tetapkan `desiredCellScale` untuk
+   * chunk (cx,cy,cz), yang akan dibaca `remeshChunk()` di build
+   * berikutnya. Kalau chunk belum ada (mis. dipanggil sebelum
+   * getOrCreateChunk()), no-op aman -- caller (main.js) yang
+   * bertanggung jawab memanggil setelah chunk dibuat (lihat pola yang
+   * sama di loadStreamedChunk() untuk storageType, Roadmap B.4).
+   *
+   * TIDAK langsung memicu remesh -- cuma menyimpan "keinginan" untuk
+   * dibaca remeshChunk() nanti (dipanggil lewat remeshDirtyChunks() di
+   * render loop seperti biasa). Kalau `cellScale` beda dari cellScale
+   * BUILD TERAKHIR chunk ini, remeshChunk() otomatis memaksa full
+   * rebuild (cache B.2 dari skala lama tidak valid untuk skala baru) --
+   * lihat catatan lengkap di remeshChunk().
+   *
+   * @param {number} cellScale - harus integer >= 1, dan idealnya membagi
+   *   habis this.chunkSize di semua sumbu (lihat catatan di
+   *   SurfaceNetsMesher.generateMesh() -- cellScale yang tidak membagi
+   *   habis tidak crash, cuma menyisakan sedikit voxel tepi yang tidak
+   *   ter-cover, degradasi anggun bukan bug fatal).
+   */
+  setChunkLOD(cx, cy, cz, cellScale) {
+    const chunk = this.getChunk(cx, cy, cz);
+    if (!chunk) return;
+    chunk.desiredCellScale = Number.isInteger(cellScale) && cellScale >= 1 ? cellScale : 1;
   }
 
   /**

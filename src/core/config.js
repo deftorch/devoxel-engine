@@ -18,6 +18,23 @@ export const DEFAULT_VIEW_DISTANCE = 5;
 // penuh, fitur ini jadi tidak berpengaruh apapun).
 export const DEFAULT_NEAR_STORAGE_RADIUS = 2;
 
+// Roadmap A.6/B.5 -- LOD Chunk Jauh: cellScale (lihat
+// SurfaceNetsMesher.generateMesh()) yang dipakai untuk chunk di luar
+// DEFAULT_NEAR_STORAGE_RADIUS (ambang jarak yang SAMA dipakai untuk
+// storage & LOD sekaligus -- "makin jauh, makin kasar" berlaku konsisten
+// di keduanya, lihat main.js). WAJIB membagi habis CHUNK_SX/SY/SZ di atas
+// (16/4=4, 40/4=10, 16/4=4 -- semuanya integer) supaya sampling mesher
+// tidak menyisakan voxel tepi yang tidak ter-cover. cellScale=4 berarti
+// mesher men-sample tiap 4 voxel (bukan 1), memangkas jumlah cell yang
+// diproses ~64x (4 per sumbu) untuk chunk yang sama -- vertex/triangle
+// count turun sebanding, itulah sumber penghematan draw call & memori
+// GPU untuk chunk jauh. KETERBATASAN YANG DIKETAHUI: belum ada skirt/
+// stitching geometry di batas transisi LOD, jadi ada risiko celah visual
+// kecil di garis batas antara chunk cellScale=1 dan cellScale=4 yang
+// bersebelahan -- diterima sebagai trade-off tahap awal, didokumentasikan
+// di ROADMAP sebagai follow-up.
+export const DEFAULT_LOD_CELL_SCALE = 4;
+
 // Roadmap A.5 -- Origin Rebasing: jarak (dalam chunk, Chebyshev) dari
 // origin saat ini yang memicu rebase (lihat OriginRebase.js). Dipilih jauh
 // lebih besar dari DEFAULT_VIEW_DISTANCE supaya rebase (yang memicu remesh

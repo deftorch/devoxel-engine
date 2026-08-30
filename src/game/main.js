@@ -1,5 +1,5 @@
 import { addEntity, query, addComponent } from 'bitecs';
-import { WORLD_CHUNKS, CHUNK_SX, CHUNK_SY, CHUNK_SZ, DEFAULT_VIEW_DISTANCE, DEFAULT_REBASE_THRESHOLD_CHUNKS, DEFAULT_REMESH_BUDGET_PER_FRAME, DEFAULT_NEAR_STORAGE_RADIUS, DEFAULT_MAX_FRAMES_TO_CLEAR_REMESH_BACKLOG } from '../core/config.js';
+import { WORLD_CHUNKS, CHUNK_SX, CHUNK_SY, CHUNK_SZ, DEFAULT_VIEW_DISTANCE, DEFAULT_REBASE_THRESHOLD_CHUNKS, DEFAULT_REMESH_BUDGET_PER_FRAME, DEFAULT_NEAR_STORAGE_RADIUS, DEFAULT_MAX_FRAMES_TO_CLEAR_REMESH_BACKLOG, DEFAULT_LOD_CELL_SCALE } from '../core/config.js';
 import {
   world,
   Position,
@@ -146,9 +146,18 @@ async function main() {
    * setelah `await` (bukan cuma cek non-null) cukup untuk mendeteksi
    * "apakah ini masih upaya load YANG SAMA" -- tanpa perlu bookkeeping
    * token/generation-counter terpisah.
+   *
+   * Roadmap A.6/B.5 -- LOD: `cellScale` (default 1, dipilih call site
+   * berdasar jarak -- lihat komentar di titik pemanggilan) diset lewat
+   * engine.setChunkLOD() SEGERA setelah chunk dibuat, SEBELUM await apapun
+   * -- baik jalur persistence maupun generation akan membaca
+   * chunk.desiredCellScale ini otomatis lewat remeshChunk() begitu
+   * storage-nya terisi (lihat VoxelEngine.js), jadi tidak perlu wiring
+   * terpisah di kedua cabang di bawah.
    */
-  async function loadStreamedChunk(cx, cz, storageType, terrainType, priorityDistance) {
+  async function loadStreamedChunk(cx, cz, storageType, terrainType, priorityDistance, cellScale = 1) {
     const originalChunk = engine.getOrCreateChunk(cx, 0, cz);
+    engine.setChunkLOD(cx, 0, cz, cellScale);
 
     if (chunkPersistenceStore) {
       let savedStorage = null;
@@ -706,12 +715,31 @@ async function main() {
             // (presisi maksimal, cocok untuk diedit); chunk lebih jauh
             // (tapi masih dalam radius streaming) dapat storage
             // terkompresi -- lihat DEFAULT_NEAR_STORAGE_RADIUS di config.js.
-            // Keputusan ini HANYA diambil sekali, saat chunk pertama kali
-            // di-load -- storage TIDAK di-upgrade/downgrade otomatis kalau
-            // pemain berpindah jarak setelahnya (lihat catatan lengkap di
-            // ROADMAP soal keputusan scope ini).
+            // Roadmap A.6/B.5 -- ambang jarak yang SAMA juga dipakai untuk
+            // LOD mesh (cellScale): chunk dekat pemain di-mesh resolusi
+            // penuh (cellScale=1), chunk lebih jauh di-mesh lebih kasar
+            // (cellScale=4 -- lihat DEFAULT_LOD_CELL_SCALE) supaya vertex/
+            // triangle count-nya jauh lebih sedikit, mengurangi draw call
+            // & memori GPU untuk chunk yang toh cuma terlihat kecil di
+            // layar. Kedua keputusan (storage & LOD) SENGAJA dibundel di
+            // ambang yang sama -- "makin jauh, makin kasar" berlaku
+            // konsisten di storage MAUPUN mesh sekaligus.
+            //
+            // PENTING (keterbatasan yang diketahui, lihat ROADMAP): belum
+            // ada skirt/stitching geometry di batas transisi LOD -- chunk
+            // cellScale=1 yang bersebelahan dengan chunk cellScale=4 bisa
+            // punya celah visual KECIL di garis batasnya (vertex besar-
+            // besar dari chunk kasar tidak pas menyambung ke vertex kecil-
+            // kecil dari chunk halus). Diterima sebagai trade-off tahap
+            // awal LOD, bukan diklaim seamless sempurna.
+            //
+            // Keputusan ini (seperti storageType di atas) HANYA diambil
+            // sekali, saat chunk pertama kali di-load -- TIDAK di-upgrade/
+            // downgrade otomatis kalau pemain berpindah jarak setelahnya
+            // (scope decision yang sama seperti B.4, lihat ROADMAP).
             const storageType = priorityDistance <= DEFAULT_NEAR_STORAGE_RADIUS ? 'sdf' : 'sdf-compact';
-            loadStreamedChunk(cx, cz, storageType, 'normal', priorityDistance);
+            const cellScale = priorityDistance <= DEFAULT_NEAR_STORAGE_RADIUS ? 1 : DEFAULT_LOD_CELL_SCALE;
+            loadStreamedChunk(cx, cz, storageType, 'normal', priorityDistance, cellScale);
           }
           for (const [cx, cz] of delta.toUnload) unloadStreamedChunk(cx, cz);
         }
